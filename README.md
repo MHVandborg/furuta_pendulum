@@ -68,9 +68,29 @@ The balancing controller consists of two phases:
 
 ---
 
+## Repository Structure
+
+```
+furuta_pendulum/
+├── firmware/          # MCU source code (VS Code, ARM GCC, CMake)
+├── hardware/
+│   ├── pcb/           # KiCad schematic and PCB layout files
+│   └── mechanical/    # Fusion 360 3D design files
+├── neural_network/    # NN training scripts and exported model weights
+└── docs/              # Datasheets, notes, references
+```
+
+---
+
 ## Toolchain
 - ARM GCC
 - CMake
 - VS Code
 - OpenOCD + CMSIS-DAP debugger
 - CMSIS-NN for optimized neural network inference on M4F
+
+---
+
+## Contact
+
+If you use or build on this project, I'd love to hear about it! Feel free to open an issue or reach out directly.
