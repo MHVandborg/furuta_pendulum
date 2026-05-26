@@ -1,0 +1,26 @@
+# KiCad
+hardware/pcb/*-backups/
+hardware/pcb/_autosave-*
+hardware/pcb/*.lck
+hardware/pcb/~*.lck
+
+# Build artifacts
+build/
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+
+# VS Code
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# OS
+.DS_Store
+Thumbs.db
