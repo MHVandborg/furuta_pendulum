@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "furuta_pendulum") (type "KiCad") (uri "${KIPRJMOD}/furuta_pendulum.pretty") (options "") (descr "Furuta Pendulum project-specific footprints"))
+)
