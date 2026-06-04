@@ -7,7 +7,9 @@ applyTo: "hardware/pcb/**"
 
 ## MCU — ATSAMD51J20A (TQFP-64)
 - Decouple every VDD pin with 100nF X7R 0402 close to pin + bulk 10µF X5R 0805 per power domain
-- SWD header: SWDIO, SWDCLK, GND, +3V3 (4-pin, 1.27mm pitch) — compatible with Atmel-ICE
+- SWD: Tag-Connect TC2030 (with legs) — `Conn_ARM_SWD_TagConnect_TC2030` footprint
+  - Pin 1: VTref → 3.3V, Pin 2: SWDIO → PA31, Pin 3: nRESET → RESET, Pin 4: SWDCLK → PA30, Pin 5: GND, Pin 6: SWO → PA27
+  - Add 100nF cap from nRESET to GND
 - USB-C: 27Ω series on D+ and D-, ESD protection IC (USBLC6-2SC6)
 - No external crystal — use internal DFLL48M locked to USB SOF
 
@@ -38,8 +40,10 @@ applyTo: "hardware/pcb/**"
 
 ## Power Architecture
 - **Logic**: USB-C VBUS (5V) → AMS1117-3.3 LDO → 3.3V
-- **Motor**: J1 VM connector → SMBJ15A TVS → pi-filter → +VM → DRV8313
-- TVS diodes: SMBJ15A on +VM (shunt to PGND), SMBJ5.0A on +5V (shunt to GND)
+- **Motor**: J1 VM connector (12V) → SMBJ12A TVS → pi-filter → +VM → DRV8313
+- TVS diodes: SMBJ12A on +12V/+VM (shunt to PGND), SMBJ5.0A on +5V VBUS (shunt to GND)
+- TVS package: both use SMB (DO-214AA) — footprint `Diode_SMD:D_SMB`
+- Pi-filter on VBUS: C1 10µF (VBUS side) → ferrite bead (~600Ω @ 100MHz) → C2 100nF (5V rail side)
 - PGND and GND joined via ferrite bead (FB4, BLM21PG121SN1L, 0805) at star point near LDO
 - FB3 (BLM18PG121SN1D, 0603) on MCU VSW pin for internal switching regulator filter
 
@@ -61,7 +65,7 @@ applyTo: "hardware/pcb/**"
 - Motor phases: 3-pin Molex Micro-Fit (43045-0300), locking — use shielded cable, shield to PGND at PCB end only
 - AS5600 encoders: 4-pin headers for I2C + 3.3V + GND
 - VM input (J1): 2-pin 2.54mm pin header for 12V PSU
-- SWD (J4): 4-pin 1.27mm pitch header — compatible with Atmel-ICE
+- SWD: Tag-Connect TC2030 (with legs) — no connector body, pads + holes only
 - USB: USB-C receptacle
 - LCD (J2): 7-pin 2.54mm header (VCC, GND, SCK, MOSI, CS, DC, RST)
 - Buttons: 10kΩ pull-up to 3.3V on PCB; SW3 connected to PB00 via direct wire (no net label)
