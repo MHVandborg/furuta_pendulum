@@ -91,6 +91,14 @@ furuta_pendulum/
 
 ---
 
+## PCB Revision History
+
+| Rev | Tag | Date | Notes |
+|-----|-----|------|-------|
+| 1 | [`hw-rev1`](../../releases/tag/hw-rev1) | 2026-06-07 | First production run — sent to JLCPCB |
+
+---
+
 ## PCB Design Notes
 
 ### Power protection
