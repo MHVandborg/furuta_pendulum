@@ -1,0 +1,35 @@
+{
+  "board": "c:\\Electronics\\furuta_pendulum\\hardware\\pcb\\furuta_pendulum.kicad_pcb",
+  "timestamp": "2026-06-06T18:07:31",
+  "total_violations": 2,
+  "violation_counts": {
+    "lib_footprint_mismatch": 2
+  },
+  "severity_counts": {
+    "error": 0,
+    "warning": 2,
+    "info": 0
+  },
+  "violations": [
+    {
+      "type": "lib_footprint_mismatch",
+      "severity": "warning",
+      "message": "Footprint 'USB_C_Receptacle_HRO_TYPE-C-31-M-12' does not match copy in library 'Connector_USB'",
+      "location": {
+        "x": 136.0,
+        "y": 39.5,
+        "unit": "mm"
+      }
+    },
+    {
+      "type": "lib_footprint_mismatch",
+      "severity": "warning",
+      "message": "Footprint 'TQFP-64_10x10mm_P0.5mm' does not match copy in library 'Package_QFP'",
+      "location": {
+        "x": 136.75,
+        "y": 65.0,
+        "unit": "mm"
+      }
+    }
+  ]
+}

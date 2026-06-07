@@ -1,30 +1,132 @@
-(footprint "SW_TS-1088-AR02016" (version 20240108) (generator "pcbnew") (generator_version "8.0")
-  (layer "F.Cu")
-  (descr "TS-1088-AR02016 / JLCPCB C318884. SMD tactile switch 5.1x5.1mm body, lead span 6.5mm, pitch 3.7mm, height 1.5mm.")
-  (tags "switch tactile SMD JLCPCB basic TS-1088")
-  (attr smd)
-
-  (fp_text reference "SW?" (at 0 -4.2) (layer "F.SilkS")
-    (effects (font (size 1 1) (thickness 0.15)))
-  )
-  (fp_text value "SW_TS-1088-AR02016" (at 0 4.2) (layer "F.Fab")
-    (effects (font (size 1 1) (thickness 0.15)))
-  )
-
-  (fp_rect (start -2.55 -2.55) (end 2.55 2.55) (layer "F.Fab")
-    (stroke (width 0.1) (type solid)) (fill none)
-  )
-
-  (fp_line (start -2.55 -2.55) (end 2.55 -2.55) (layer "F.SilkS") (stroke (width 0.12) (type solid)))
-  (fp_line (start -2.55 2.55) (end 2.55 2.55) (layer "F.SilkS") (stroke (width 0.12) (type solid)))
-
-  (fp_rect (start -4.25 -3.2) (end 4.25 3.2) (layer "F.CrtYd")
-    (stroke (width 0.05) (type solid)) (fill none)
-  )
-
-  (pad "1" smd rect (at -3.25 -1.85) (size 1.5 2.2) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "3" smd rect (at -3.25 1.85) (size 1.5 2.2) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "2" smd rect (at 3.25 -1.85) (size 1.5 2.2) (layers "F.Cu" "F.Paste" "F.Mask"))
-  (pad "4" smd rect (at 3.25 1.85) (size 1.5 2.2) (layers "F.Cu" "F.Paste" "F.Mask"))
+(footprint "SW_TS-1088-AR02016"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "TS-1088-AR02016 SMD tactile switch, 5.0x3.0mm body, 2-pad SPST, PCB land 5.5mm outer / 3.4mm gap / 2.0mm height, JLCPCB C318884")
+	(tags "switch tactile SMD TS-1088 JLCPCB C318884")
+	(property "Reference" "SW?"
+		(at 0 -2.5 0)
+		(layer "F.SilkS")
+		(uuid "59dbcc9d-b7a8-4ece-8f71-c2c00379e2f9")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "SW_TS-1088-AR02016"
+		(at 0 2.5 0)
+		(layer "F.Fab")
+		(uuid "be835089-a272-4365-8cde-807e4b475673")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "e9f45111-6ffa-4e36-be73-489db9f59cf8")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "8a8869b1-029a-42d2-8a35-b40205d655d9")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -1.6 -1.6)
+		(end 1.6 -1.6)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "11aabbcc-dd00-1111-aa11-aabbccddeeff")
+	)
+	(fp_line
+		(start -1.6 1.6)
+		(end 1.6 1.6)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "22aabbcc-dd00-2222-bb22-aabbccddeeff")
+	)
+	(fp_rect
+		(start -3.0 -1.75)
+		(end 3.0 1.75)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "33aabbcc-dd00-3333-cc33-aabbccddeeff")
+	)
+	(fp_rect
+		(start -2.5 -1.5)
+		(end 2.5 1.5)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "44aabbcc-dd00-4444-dd44-aabbccddeeff")
+	)
+	(fp_circle
+		(center 0 0)
+		(end 0 0.9)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "55aabbcc-dd00-5555-ee55-aabbccddeeff")
+	)
+	(pad "1" smd rect
+		(at -2.225 0)
+		(size 1.05 2)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "66aabbcc-dd00-6666-ff66-aabbccddeeff")
+	)
+	(pad "2" smd rect
+		(at -2.225 0)
+		(size 1.05 2)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "77aabbcc-dd00-7777-aa77-aabbccddeeff")
+	)
+	(pad "3" smd rect
+		(at 2.225 0)
+		(size 1.05 2)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "88aabbcc-dd00-8888-bb88-aabbccddeeff")
+	)
+	(pad "4" smd rect
+		(at 2.225 0)
+		(size 1.05 2)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "99aabbcc-dd00-9999-cc99-aabbccddeeff")
+	)
+	(embedded_fonts no)
 )
-

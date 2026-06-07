@@ -94,10 +94,10 @@
         "duplicate_footprints": "warning",
         "extra_footprint": "warning",
         "footprint": "error",
-        "footprint_filters_mismatch": "ignore",
+        "footprint_filters_mismatch": "warning",
         "footprint_symbol_field_mismatch": "warning",
         "footprint_symbol_mismatch": "warning",
-        "footprint_type_mismatch": "ignore",
+        "footprint_type_mismatch": "warning",
         "hole_clearance": "error",
         "hole_to_hole": "warning",
         "holes_co_located": "warning",
@@ -111,7 +111,7 @@
         "malformed_courtyard": "error",
         "microvia_drill_out_of_range": "error",
         "mirrored_text_on_front_layer": "warning",
-        "missing_courtyard": "ignore",
+        "missing_courtyard": "warning",
         "missing_footprint": "warning",
         "missing_tuning_profile": "warning",
         "net_conflict": "warning",
@@ -133,12 +133,12 @@
         "too_many_vias": "error",
         "track_angle": "error",
         "track_dangling": "warning",
-        "track_not_centered_on_via": "ignore",
+        "track_not_centered_on_via": "warning",
         "track_on_post_machined_layer": "error",
         "track_segment_length": "error",
         "track_width": "error",
         "tracks_crossing": "error",
-        "tuning_profile_track_geometries": "ignore",
+        "tuning_profile_track_geometries": "warning",
         "unconnected_items": "error",
         "unresolved_variable": "error",
         "via_dangling": "warning",
@@ -154,7 +154,7 @@
         "min_hole_to_hole": 0.5,
         "min_microvia_diameter": 0.2,
         "min_microvia_drill": 0.1,
-        "min_resolved_spokes": 2,
+        "min_resolved_spokes": 1,
         "min_silk_clearance": 0.0,
         "min_text_height": 0.8,
         "min_text_thickness": 0.15,
@@ -164,7 +164,7 @@
         "min_via_diameter": 0.6,
         "solder_mask_clearance": 0.05,
         "solder_mask_min_width": 0.0,
-        "solder_mask_to_copper_clearance": 0.0,
+        "solder_mask_to_copper_clearance": 0.005,
         "use_height_for_length_calcs": true
       },
       "teardrop_options": [
@@ -464,9 +464,9 @@
       "endpoint_off_grid": "warning",
       "extra_units": "error",
       "field_name_whitespace": "warning",
-      "footprint_filter": "ignore",
+      "footprint_filter": "warning",
       "footprint_link_issues": "warning",
-      "four_way_junction": "ignore",
+      "four_way_junction": "warning",
       "ground_pin_not_ground": "warning",
       "hier_label_mismatch": "error",
       "isolated_pin_label": "warning",
@@ -490,8 +490,8 @@
       "similar_label_and_power": "warning",
       "similar_labels": "warning",
       "similar_power": "warning",
-      "simulation_model_issue": "ignore",
-      "single_global_label": "ignore",
+      "simulation_model_issue": "warning",
+      "single_global_label": "warning",
       "stacked_pin_name": "warning",
       "unannotated": "error",
       "unconnected_wire_endpoint": "warning",
@@ -576,7 +576,7 @@
     "netclass_patterns": [
       {
         "netclass": "Power_LV",
-        "pattern": "+3.3V"
+        "pattern": "*3.3V*"
       },
       {
         "netclass": "Power_LV",
@@ -591,52 +591,28 @@
         "pattern": "PGND"
       },
       {
-        "netclass": "Power_HV",
-        "pattern": "+12V"
-      },
-      {
-        "netclass": "Power_HV",
-        "pattern": "+12VF"
-      },
-      {
-        "netclass": "USB_Diff",
-        "pattern": "/USB_D-"
-      },
-      {
-        "netclass": "USB_Diff",
-        "pattern": "/USB_D+"
-      },
-      {
-        "netclass": "USB_Diff",
-        "pattern": "/ESD_D+"
-      },
-      {
-        "netclass": "USB_Diff",
-        "pattern": "/ESD_D-"
-      },
-      {
-        "netclass": "USB_Diff",
-        "pattern": "/MCU_D+"
-      },
-      {
-        "netclass": "USB_Diff",
-        "pattern": "/MCU_D-"
-      },
-      {
-        "netclass": "Power_LV",
-        "pattern": "+3.3VA"
-      },
-      {
-        "netclass": "Power_LV",
-        "pattern": "/VDDIO"
-      },
-      {
-        "netclass": "Power_LV",
-        "pattern": "/VDDCORE"
-      },
-      {
         "netclass": "Power_LV",
         "pattern": "/VSW"
+      },
+      {
+        "netclass": "Power_LV",
+        "pattern": "*VBUS*"
+      },
+      {
+        "netclass": "Power_LV",
+        "pattern": "*VDD*"
+      },
+      {
+        "netclass": "USB_Diff",
+        "pattern": "*D+*"
+      },
+      {
+        "netclass": "USB_Diff",
+        "pattern": "*D-*"
+      },
+      {
+        "netclass": "Power_HV",
+        "pattern": "*12V*"
       }
     ]
   },
@@ -806,7 +782,7 @@
         "uuid": "6c744b11-c774-4392-9319-74fed267c7cb"
       }
     ],
-    "used_designators": "FB5,C15,C20,#PWR13,#PWR21,J1,J5,#FLG5",
+    "used_designators": "",
     "variants": []
   },
   "sheets": [
