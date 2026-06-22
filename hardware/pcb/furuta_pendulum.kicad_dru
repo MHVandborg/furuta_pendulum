@@ -1,0 +1,4 @@
+(version 1)
+(rule courtyard_clearance
+  (constraint courtyard_clearance (min 0.2mm))
+)

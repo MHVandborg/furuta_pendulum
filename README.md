@@ -82,8 +82,44 @@ furuta_pendulum/
 
 ---
 
+## Build & Flash
+
+### Prerequisites
+- `arm-none-eabi-gcc` toolchain
+- CMake 3.15+
+- OpenOCD
+- Atmel-ICE programmer + Tag-Connect TC2030 cable
+
+### Build
+
+```powershell
+# Configure (first time only)
+cmake -B build
+
+# Build
+cmake --build build
+
+# Check binary size
+arm-none-eabi-size build/furuta_pendulum.elf
+```
+
+Flash target is 1MB; RAM is 192KB. Watch `.text` and `.data`/`.bss` sections.
+
+### Flash
+
+Connect the Atmel-ICE via USB and seat the Tag-Connect TC2030 on J6, then:
+
+```powershell
+openocd -f interface/atmel-ice.cfg -f target/atsame5x.cfg `
+  -c "program build/furuta_pendulum.elf verify reset exit"
+```
+
+Debug output goes to USB CDC — connect a serial terminal to the USB port after flashing.
+
+---
+
 ## Toolchain
-- ARM GCC
+- ARM GCC (`arm-none-eabi-gcc`)
 - CMake
 - VS Code
 - Atmel-ICE + Tag-Connect TC2030 for SWD debugging
