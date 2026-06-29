@@ -1,70 +1,50 @@
 # Furuta Pendulum
 
-A Furuta pendulum (rotary inverted pendulum) controlled by a neural network running on a custom PCB.
+A Furuta (rotary inverted) pendulum system controlled by a neural network running on a custom PCB.
 
-The system consists of a horizontal rotating arm driven by a motor, with a freely swinging pendulum attached at the end. The goal is to swing up and balance the pendulum in the inverted (upright) position using a trained neural network controller.
+The system consists of a horizontal rotating arm driven by a BLDC motor, with a freely swinging pendulum attached at the end. The neural network controller learns to swing up and balance the pendulum using reinforcement learning trained in a physics simulation, then deployed directly onto the MCU.
 
----
+## End Goal — Double Furuta Pendulum
 
-## Hardware
-
-### MCU — ATSAMD51J20A
-ARM Cortex-M4F running at 120MHz with a hardware FPU (Floating Point Unit).
-- Hardware FPU is essential for efficient neural network inference and FOC math
-- 1MB flash provides ample space for NN weights, FOC code, USB and LCD drivers
-- 192KB RAM — sufficient for real-time inference at 500–1000Hz
-- Integrated USB Full Speed — clean PCB design, no external USB-UART chip needed
-- 64-pin QFN package — enough I/O without excess
-- Bare-metal friendly — clean register-level programming without heavy frameworks
-
-### Motor — GBM2804H-100T (Gimbal BLDC)
-A brushless gimbal motor designed for low-speed, high-torque applications.
-- Very low cogging torque — smooth, predictable motion critical for NN-based control
-- Gimbal motors are specifically wound to minimize magnetic detents
-- Low inertia — fast dynamic response needed for balancing
-- High cogging in cheaper motors would introduce non-linearities that degrade NN performance
-
-### Motor Driver — SimpleFOC Mini (DRV8313)
-A compact 3-phase gate driver board implementing Field Oriented Control (FOC).
-- FOC provides smooth, continuous torque control at any speed
-- DRV8313 handles all low-level phase commutation internally
-- SimpleFOC library natively supported — accepts high-level torque commands
-- 2.5A continuous — well matched to the GBM2804
-
-### Encoders — 2x AS5600 (Magnetic, 12-bit)
-Magnetic absolute rotary encoders for angle measurement.
-- One AS5600 measures the **arm angle** (motor shaft)
-- One AS5600 measures the **pendulum angle**
-- 12-bit resolution (4096 steps/revolution) — sufficient for this application
-- I2C interface — simple wiring, supported natively on ATSAMD51
-- Note: both have the same I2C address (0x36), so they require separate I2C buses
-
-### Display — ST7735S 1.8" TFT LCD (128x160, SPI)
-A small color display for showing system state, angles, and NN output.
-- SPI interface — fast enough for real-time updates
-- 3.3V compatible — direct connection to MCU
+The ultimate goal is a **double Furuta pendulum**: motorised arm → first free pendulum → second free pendulum, all balanced simultaneously in the inverted position by a single neural network. The current hardware (PCB rev1) targets the single pendulum first as a validated stepping stone. Double Furuta requires a PCB rev2 with a third encoder.
 
 ---
 
 ## Control Architecture
 
+### Single Furuta (PCB rev1 — current)
+
 ```
-[AS5600 arm]  [AS5600 pendulum]
+[AS5600 arm]  [AS5600 pendulum 1]
       |               |
       +-------+-------+
               |
-        [Neural Network]
-        4 inputs: θ_arm, θ_pendulum, ω_arm, ω_pendulum
-        Output: torque_command
+        [Neural Network]  MLP 2×64, trained with PPO
+        inputs:  θ_arm, θ_p1, ω_arm, ω_p1
+        output:  torque_command (−1…+1)
               |
         [SimpleFOC / DRV8313]
               |
-        [GBM2804H-100T]
+        [GBM2804H-100T BLDC]
 ```
 
-The balancing controller consists of two phases:
-- **Swing-up**: energy-based controller (or separate NN) to bring the pendulum near the upright position
-- **Balance**: NN controller to maintain the inverted position
+### Double Furuta (PCB rev2 — future)
+
+```
+[AS5600 arm]  [AS5600 pendulum 1]  [AS5600 pendulum 2]
+      |               |                    |
+      +-----------+---+--------------------+
+                  |
+            [Neural Network]  MLP 2×64 (extended inputs), trained with SAC
+            inputs:  θ_arm, θ_p1, θ_p2, ω_arm, ω_p1, ω_p2
+            output:  torque_command (−1…+1)
+                  |
+            [SimpleFOC / DRV8313]
+                  |
+            [GBM2804H-100T BLDC]
+```
+
+A single NN handles both swing-up and balancing via curriculum learning — it trains near vertical first, then faces progressively larger starting angles.
 
 ---
 
@@ -72,58 +52,26 @@ The balancing controller consists of two phases:
 
 ```
 furuta_pendulum/
-├── firmware/          # MCU source code (VS Code, ARM GCC, CMake)
+├── firmware/          # Bare-metal C (ARM GCC, CMake) → firmware/README.md
 ├── hardware/
-│   ├── pcb/           # KiCad schematic and PCB layout files
+│   ├── pcb/           # KiCad schematic + layout → hardware/pcb/COMPONENTS.md
 │   └── mechanical/    # Fusion 360 3D design files
-├── neural_network/    # NN training scripts and exported model weights
-└── docs/              # Datasheets, notes, references
+├── neural_network/    # RL training + Gymnasium env + exported weights → neural_network/README.md
+├── bootloader/        # UF2 bootloader binary for ATSAMD51J20A
+└── docs/              # Datasheets and reference documents
 ```
-
----
-
-## Build & Flash
-
-### Prerequisites
-- `arm-none-eabi-gcc` toolchain
-- CMake 3.15+
-- OpenOCD
-- Atmel-ICE programmer + Tag-Connect TC2030 cable
-
-### Build
-
-```powershell
-# Configure (first time only)
-cmake -B build
-
-# Build
-cmake --build build
-
-# Check binary size
-arm-none-eabi-size build/furuta_pendulum.elf
-```
-
-Flash target is 1MB; RAM is 192KB. Watch `.text` and `.data`/`.bss` sections.
-
-### Flash
-
-Connect the Atmel-ICE via USB and seat the Tag-Connect TC2030 on J6, then:
-
-```powershell
-openocd -f interface/atmel-ice.cfg -f target/atsame5x.cfg `
-  -c "program build/furuta_pendulum.elf verify reset exit"
-```
-
-Debug output goes to USB CDC — connect a serial terminal to the USB port after flashing.
 
 ---
 
 ## Toolchain
-- ARM GCC (`arm-none-eabi-gcc`)
-- CMake
-- VS Code
-- Atmel-ICE + Tag-Connect TC2030 for SWD debugging
-- CMSIS-NN for optimized neural network inference on M4F
+
+| Area | Tools |
+|---|---|
+| Firmware | ARM GCC, CMake, VS Code, Atmel-ICE + Tag-Connect TC2030 (SWD), UF2 bootloader |
+| ML / Training | Python, TensorFlow / Keras, Gymnasium, PPO → SAC |
+| Inference on MCU | TensorFlow Lite Micro (TFLM) |
+| Mechanical | Fusion 360, PLA (FDM) |
+| PCB | KiCad |
 
 ---
 
@@ -131,24 +79,23 @@ Debug output goes to USB CDC — connect a serial terminal to the USB port after
 
 | Rev | Tag | Date | Notes |
 |-----|-----|------|-------|
-| 1 | [`hw-rev1`](../../releases/tag/hw-rev1) | 2026-06-07 | First production run — sent to JLCPCB |
+| 1 | [`hw-rev1`](../../releases/tag/hw-rev1) | 2026-06-07 | First production run — JLCPCB. Single Furuta (2 encoders) |
+| 2 | *(planned)* | TBD | Add AS5600 #3 + third I2C bus for double Furuta |
 
 ---
 
-## PCB Design Notes
+## Further Reading
 
-### Power protection
-- **VBUS (5V)**: Pi-filter (10µF → ferrite bead → 100nF) + SMBJ5.0A TVS diode
-- **Motor rail (12V)**: SMBJ12A TVS diode. Both TVS in SMB package (`Diode_SMD:D_SMB`)
-
-### Debug interface
-- Tag-Connect TC2030 (with legs) — no connector body, clips on during programming
-- Full 6-pin SWD: VTref, SWDIO, SWDCLK, nRESET, GND, SWO (PA27)
-- Programmed via Atmel-ICE using SWD (not JTAG)
-- 100nF cap on nRESET to GND for noise immunity
+| Document | Contents |
+|---|---|
+| [ROADMAP.md](ROADMAP.md) | Full phased development plan with checklists |
+| [hardware/pcb/COMPONENTS.md](hardware/pcb/COMPONENTS.md) | Component choices, rationale, and PCB design decisions |
+| [firmware/README.md](firmware/README.md) | Firmware architecture, build instructions, peripheral map |
+| [neural_network/README.md](neural_network/README.md) | RL training approach, simulation, reward design, export pipeline |
 
 ---
 
 ## Contact
 
 If you use or build on this project, I'd love to hear about it! Feel free to open an issue or reach out directly.
+
