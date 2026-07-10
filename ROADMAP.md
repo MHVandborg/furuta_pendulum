@@ -116,7 +116,7 @@ Bring the trained policy onto the MCU and close the real hardware loop.
 Extend the hardware, simulation, and controller to the double pendulum configuration.
 
 ### Hardware
-- [ ] PCB rev2 design: add AS5600 #3, route to a spare SERCOM as third I2C bus
+- [ ] PCB rev2 design: switch all 3 encoders to AS5048A (SPI) — see Rev2 notes below
 - [ ] Order and assemble PCB rev2
 - [ ] Design pendulum 2 arm and pivot mount in Fusion 360
 - [ ] Extract L₃, m₃ from CAD
@@ -133,9 +133,89 @@ Extend the hardware, simulation, and controller to the double pendulum configura
 - [ ] Train, validate, export as before
 
 ### Firmware
-- [ ] Add I2C2 driver for AS5600 #3
+- [ ] Replace I2C encoder drivers with SPI AS5048A driver (shared bus, 3 CS pins)
 - [ ] Extend state vector from 4 → 6 inputs
 - [ ] Deploy new model, test on real hardware
+
+---
+
+## Rev2 PCB Improvement Notes
+
+Ideas identified during rev1 development. Implement together with the Phase 6 hardware redesign.
+
+### Encoder upgrade: AS5600 → AS5048A (SPI)
+
+- **Why:** AS5048A is 14-bit (0.022°) vs AS5600 12-bit (0.088°). 4× better angle resolution
+  gives 4× better velocity estimates near the balance point, which tightens balance quality
+  for both the single and double pendulum.
+- **Double pendulum motivation:** 6-state control compounds velocity noise across two
+  pendulums. Noisy ω_p1 and ω_p2 simultaneously makes the harder balancing problem
+  significantly worse. The upgrade is clearly worthwhile at rev2.
+- **Bus simplification:** All three AS5048A encoders share one SPI bus — just different CS
+  pins (e.g. PA15, PA16, PA17). Eliminates the two-I2C-bus workaround needed because both
+  AS5600s share the hardwired address 0x36.
+- **Speed:** SPI at 10 MHz → ~3 μs/read vs ~90 μs/read over I2C. Parallel CS transactions
+  possible; all three reads complete in under 10 μs total.
+
+### I2C Fast Mode+ on rev1 (no hardware change needed)
+
+- AS5600 supports up to 1 MHz (Fast Mode+). Rev1 firmware uses 400 kHz.
+- Changing the SERCOM baud register halves read latency to ~36 μs/encoder at no cost.
+- Worth doing in firmware before committing to the encoder swap.
+
+### Control loop frequency
+
+- 500 Hz is already ~15× the pendulum's natural frequency (~1.6 Hz) — well beyond what
+  the single pendulum dynamics require.
+- Higher frequency (1 kHz) improves velocity estimate quality (finer finite-difference
+  resolution) but provides no additional control-theoretic benefit for the single pendulum.
+- For the double pendulum, the second pendulum's higher-frequency modes may justify 1 kHz.
+  Re-evaluate after rev1 balance is working.
+
+### Velocity estimation: EMA filter in firmware
+
+- Velocities are computed by finite-differencing successive encoder readings, which produces
+  a noisy staircase signal near the balance point (smallest detectable ω ≈ 44°/s with AS5600).
+- An Exponential Moving Average (EMA) filter in firmware handles this at zero cost:
+    `ω_filtered = α·ω_raw + (1−α)·ω_filtered_prev`
+- This is one multiply + one add per loop iteration. No network change needed.
+- α ≈ 0.3–0.5 is a good starting range; tune on real hardware by watching the USB CDC log.
+- Do this before considering any network architecture changes for noise.
+
+### Motor dynamics modelling
+
+- Currently the sim assumes torque is delivered instantaneously. Real motors have inductance
+  lag and back-EMF that cause the delivered torque to lag the commanded torque.
+- **System identification procedure (after firmware can command torques):**
+  1. Command a series of known torque steps via firmware
+  2. Record angular acceleration α from the encoder at each step
+  3. Fit `τ = J·α + b·ω` (linear regression) to extract real J and b values
+  4. Add a first-order lag model: `τ_actual(s) = τ_cmd(s) / (1 + T_motor·s)`
+  5. Update `FurutaParams` nominal values and retrain with tighter domain randomisation (±10%)
+- This is a one-day task once hardware is working and is the single biggest lever for
+  closing the sim-to-real gap.
+
+### Swing-up / balance handoff condition
+
+- Current firmware plan uses a pure angle threshold (|θ₂ − π| < 20°) to switch networks.
+- Better condition uses both angle AND energy:
+    switch when |θ₂ − π| < 20°  AND  E_pendulum > E_upright − 0.05 J
+- The energy condition prevents handing off when the pendulum is geometrically "near"
+  vertical but already falling back down with insufficient energy to stay there.
+- E_upright = mp·g·Lp — computed from FurutaParams; update after mechanical design.
+
+### Neural network architecture improvements (post rev1)
+
+- **Frame stacking for balance (fallback):** If balance is noisy after EMA tuning, feed
+  the last 2–3 observations as input [s_t, s_{t-1}, s_{t-2}] = 12 floats. The network
+  learns its own implicit filter. A circular buffer in firmware RAM handles this trivially.
+  Try EMA first — this is only needed if the firmware filter is insufficient.
+- **Previous action as input:** Feeding the last torque command helps the network account
+  for motor lag not captured in the physics model. Low cost: 1 extra input to both networks.
+- **Recurrent networks (LSTM/GRU) for rev2 / double pendulum:** LSTM maintains hidden state
+  between loop iterations, learning arbitrary temporal patterns. Harder to train than MLP
+  but genuinely useful for the 6-state double pendulum where coupled dynamics are harder
+  to observe cleanly. CMSIS-NN supports it. Revisit when extending to double pendulum.
 
 ---
 
@@ -149,4 +229,4 @@ Extend the hardware, simulation, and controller to the double pendulum configura
 | ST7735S 1.8" LCD | rev1 | — |
 | Atmel-ICE + Tag-Connect | — | — |
 | UF2 bootloader binary | — | ✅ In repo |
-| AS5600 encoder #3 | rev2 | Planned |
+| 3× AS5048A encoder (SPI) | rev2 | Planned |

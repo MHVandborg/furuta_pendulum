@@ -1,0 +1,16 @@
+# RL training
+gymnasium>=1.1.1
+stable-baselines3>=2.6.0
+torch>=2.7.1
+tqdm>=4.0.0
+
+# Physics / numerics
+numpy>=1.26.0,<2.2.0
+scipy>=1.15.0
+
+# TFLite export
+tensorflow>=2.19.0
+
+# Visualisation & logging
+matplotlib>=3.10.0
+tensorboard>=2.19.0
