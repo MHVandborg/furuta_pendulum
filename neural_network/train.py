@@ -285,7 +285,10 @@ def _print_training_summary(mode: str, total_timesteps: int) -> None:
     slope  = float(np.polyfit(timesteps[-window:], mean_rewards[-window:], 1)[0])
     slope_per_100k = slope * 100_000
 
-    # Convergence verdict
+    # Convergence verdict.
+    # With arm_penalty=0.175 (quadratic, OMEGA1_MAX normalised), a perfectly
+    # balanced but slowly-spinning arm costs up to 0.175/step.
+    # At 2000 steps/episode: max ≈ 2000, well-controlled arm ≈ 1700–1900.
     still_rising  = slope_per_100k >  5.0   # reward improving meaningfully
     collapsed     = (best_reward - final_reward) > 100
     low_plateau   = best_reward < 1200
@@ -325,6 +328,35 @@ def _print_training_summary(mode: str, total_timesteps: int) -> None:
 # --------------------------------------------------------------------------- #
 # Entry point                                                                  #
 # --------------------------------------------------------------------------- #
+
+def _available_models() -> str:
+    """Return a human-readable list of saved models for the --help text.
+
+    Top-level zips (e.g. balance_p1_best.zip) are listed individually.
+    Subdirectories (e.g. balance_checkpoints/) are summarised by file count
+    to keep the help output readable.
+    """
+    import glob as _glob
+    from collections import defaultdict
+
+    all_zips = sorted(set(_glob.glob("models/**/*.zip", recursive=True)))
+    if not all_zips:
+        return "(no saved models found in models/)"
+
+    top_level = []
+    subdirs: dict[str, int] = defaultdict(int)
+    for path in all_zips:
+        parts = path.replace("\\", "/").split("/")
+        if len(parts) == 2:          # models/foo.zip
+            top_level.append(path)
+        else:                        # models/subdir/foo.zip
+            subdirs[parts[1]] += 1
+
+    parts = top_level[:]
+    for subdir, count in sorted(subdirs.items()):
+        parts.append(f"models/{subdir}/ ({count} checkpoints)")
+    return "available: " + ", ".join(parts)
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train Furuta pendulum PPO policy")
@@ -379,8 +411,9 @@ def parse_args():
         "--load-model",
         type=str,
         default=None,
-        help="Path to a saved model zip to continue training from "
-             "(e.g. models/balance_best/best_model.zip)",
+        metavar="PATH",
+        help="Path to a saved model zip to continue training from. "
+             f"{_available_models()}",
     )
     return p.parse_args()
 

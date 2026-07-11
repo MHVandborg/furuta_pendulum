@@ -128,8 +128,8 @@ class FurutaEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    # Velocity normalisation limits (for observations)
-    OMEGA1_MAX: float = 4.0 * np.pi   # arm:      ≈ 2 rev/s — clips observation only
+    # Velocity normalisation limits — used for both observations and penalties
+    OMEGA1_MAX: float = 4.0 * np.pi   # arm:      ≈ 2 rev/s
     OMEGA2_MAX: float = 10.0 * np.pi  # pendulum: ≈ 5 rev/s
 
     def __init__(
@@ -295,13 +295,11 @@ class FurutaEnv(gym.Env):
             # Cosine reward: +1 upright, 0 at 90°, -1 hanging.
             # Smooth gradient everywhere — works from any starting angle.
             #
-            # Arm-velocity penalty uses ARM_OMEGA_PENALTY_SCALE, not OMEGA1_MAX.
-            # OMEGA1_MAX clips the observation so the network input stays in
-            # [-1, 1].  ARM_OMEGA_PENALTY_SCALE is the speed at which the
-            # penalty saturates — set to 2 rad/s so even a slow steady spin
-            # (≈0.3 rev/s) costs a meaningful fraction of the balance reward.
-            # Using OMEGA1_MAX (4π) here would let the agent spin at 3 rad/s
-            # for a penalty of only ~0.007/step — essentially free.
+            # Arm-velocity penalty uses the same OMEGA1_MAX as the observation
+            # so the agent sees a consistent relationship between what it
+            # observes and what it gets penalised for.  To make the penalty
+            # stronger, increase coeff — do not shrink the normalisation scale,
+            # which floods early training with penalty before balancing is learned.
             coeff = getattr(self, "_arm_penalty_coeff", 0.175)
             w1_pen = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
             if getattr(self, "_arm_penalty_linear", False):
