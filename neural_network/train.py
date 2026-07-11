@@ -119,14 +119,16 @@ class CurriculumCallback(BaseCallback):
 # Training                                                                     #
 # --------------------------------------------------------------------------- #
 
-def make_env(mode: str):
+def make_env(mode: str, arm_penalty_coeff: float = 0.175):
     """Factory returning a thunk for make_vec_env."""
     def _init():
         # Balance starts within ±45° of upright — the range it will actually
         # receive from the swing-up handoff.  Cosine reward gives smooth
         # gradient signal across the full ±45° without needing a curriculum.
         difficulty = 0.23 if mode == "balance" else 1.0  # 0.23 → max_angle=±45°
-        return FurutaEnv(mode=mode, domain_randomisation=True, difficulty=difficulty)
+        env = FurutaEnv(mode=mode, domain_randomisation=True, difficulty=difficulty)
+        env._arm_penalty_coeff = arm_penalty_coeff
+        return env
     return _init
 
 
@@ -135,6 +137,9 @@ def train(
     timesteps: int,
     n_envs: int,
     save: bool,
+    learning_rate: float = 3e-4,
+    ent_coef: float = 0.01,
+    arm_penalty_coeff: float = 0.175,
 ) -> PPO:
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
@@ -142,8 +147,8 @@ def train(
     # ------------------------------------------------------------------ #
     # Environments                                                         #
     # ------------------------------------------------------------------ #
-    train_env = make_vec_env(make_env(mode), n_envs=n_envs)
-    eval_env  = make_vec_env(make_env(mode), n_envs=1)
+    train_env = make_vec_env(make_env(mode, arm_penalty_coeff), n_envs=n_envs)
+    eval_env  = make_vec_env(make_env(mode, arm_penalty_coeff), n_envs=1)
 
     # ------------------------------------------------------------------ #
     # PPO hyperparameters                                                  #
@@ -158,14 +163,14 @@ def train(
     model = PPO(
         policy="MlpPolicy",
         env=train_env,
-        learning_rate=3e-4,
+        learning_rate=learning_rate,
         n_steps=2048,           # steps per env per update
         batch_size=256,         # larger batch → more stable gradient estimates
         n_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.01,          # small entropy bonus — just enough to prevent collapse
+        ent_coef=ent_coef,
         vf_coef=0.5,
         max_grad_norm=0.5,
         policy_kwargs=policy_kwargs,
@@ -252,18 +257,42 @@ def parse_args():
         action="store_true",
         help="Skip saving models (useful for quick smoke tests)",
     )
+    p.add_argument(
+        "--learning-rate",
+        type=float,
+        default=3e-4,
+        help="PPO learning rate (default: 3e-4)",
+    )
+    p.add_argument(
+        "--ent-coef",
+        type=float,
+        default=0.01,
+        help="PPO entropy coefficient (default: 0.01)",
+    )
+    p.add_argument(
+        "--arm-penalty",
+        type=float,
+        default=0.175,
+        help="Arm angular velocity penalty coefficient (default: 0.175)",
+    )
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     print(f"\nTraining {args.mode} controller")
-    print(f"  timesteps : {args.timesteps:,}")
-    print(f"  n_envs    : {args.n_envs}")
-    print(f"  save      : {not args.no_save}\n")
+    print(f"  timesteps      : {args.timesteps:,}")
+    print(f"  n_envs         : {args.n_envs}")
+    print(f"  learning_rate  : {args.learning_rate}")
+    print(f"  ent_coef       : {args.ent_coef}")
+    print(f"  arm_penalty    : {args.arm_penalty}")
+    print(f"  save           : {not args.no_save}\n")
     train(
         mode=args.mode,
         timesteps=args.timesteps,
         n_envs=args.n_envs,
         save=not args.no_save,
+        learning_rate=args.learning_rate,
+        ent_coef=args.ent_coef,
+        arm_penalty_coeff=args.arm_penalty,
     )

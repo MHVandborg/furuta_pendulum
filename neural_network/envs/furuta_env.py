@@ -296,10 +296,12 @@ class FurutaEnv(gym.Env):
             # Smooth gradient everywhere — works from any starting angle.
             # Arm-velocity penalty uses the same normalised & clipped velocity
             # as the observation so the agent can always correlate what it sees
-            # with what it gets penalised for.  Clipped to [-1, 1] → penalty
-            # stays in [0, 0.1], never dominating the angle reward.
+            # with what it gets penalised for.
+            # The coefficient is set via env._arm_penalty_coeff so that both
+            # train.py and tune.py can control it without modifying this file.
+            coeff = getattr(self, "_arm_penalty_coeff", 0.175)
             w1_norm = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
-            return float(np.cos(theta2_err)) - 0.1 * w1_norm ** 2
+            return float(np.cos(theta2_err)) - coeff * w1_norm ** 2
         else:
             # Cosine reward: +1 when upright, -1 when hanging.
             # No arm-velocity penalty — the agent must spin freely to pump energy.
