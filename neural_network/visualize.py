@@ -55,8 +55,9 @@ def pendulum_geometry(th1, th2, p):
 # Episode runner                                                                #
 # --------------------------------------------------------------------------- #
 
-def run_episode(seed: int, difficulty: float = 0.23):
-    model = PPO.load("models/balance_best/best_model.zip")
+def run_episode(seed: int, difficulty: float = 0.23,
+                model_path: str = "models/balance_best/best_model.zip"):
+    model = PPO.load(model_path)
     env = FurutaEnv(mode="balance", difficulty=difficulty, domain_randomisation=False)
     obs, _ = env.reset(seed=seed)
     p = env._params
@@ -84,9 +85,9 @@ FRAME_SKIP = 16
 DT_CTRL    = 2e-3   # seconds per control step
 
 
-def build_animation(seed: int):
-    print(f"Running episode (seed={seed}) …")
-    states, rewards, torques, p = run_episode(seed=seed)
+def build_animation(seed: int, model_path: str = "models/balance_best/best_model.zip"):
+    print(f"Running episode (seed={seed}, model={model_path}) …")
+    states, rewards, torques, p = run_episode(seed=seed, model_path=model_path)
     cum_rewards = np.cumsum(rewards)
     n_frames = len(states) // FRAME_SKIP
 
@@ -250,10 +251,13 @@ def parse_args():
     p = argparse.ArgumentParser(description="Visualise Furuta balance controller")
     p.add_argument("--seed", type=int, default=1,
                    help="Episode seed (default 1 — ~30° start)")
+    p.add_argument("--model", type=str, default="models/balance_best/best_model.zip",
+                   help="Path to a saved SB3 model zip "
+                        "(default: models/balance_best/best_model.zip)")
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    fig, ani = build_animation(seed=args.seed)
+    fig, ani = build_animation(seed=args.seed, model_path=args.model)
     plt.show()

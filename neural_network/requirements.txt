@@ -4,6 +4,10 @@ stable-baselines3>=2.6.0
 torch>=2.7.1
 tqdm>=4.0.0
 
+# Hyperparameter optimisation
+optuna>=4.0.0
+optuna-dashboard>=0.20.0
+
 # Physics / numerics
 numpy>=1.26.0,<2.2.0
 scipy>=1.15.0

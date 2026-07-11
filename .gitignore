@@ -29,6 +29,11 @@ venv/
 neural_network/models/*.h5
 neural_network/models/*.keras
 neural_network/exported/*.tflite
+neural_network/models/
+neural_network/exported/
+neural_network/logs/
+neural_network/tune_study.db
+neural_network/*.png
 
 # OS
 .DS_Store
