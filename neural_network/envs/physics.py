@@ -41,12 +41,12 @@ class FurutaParams:
     """
 
     L1: float = 0.15       # arm length (m)
-    m1: float = 0.05       # arm mass (kg)
-    L2: float = 0.20       # pendulum length (m)
-    m2: float = 0.03       # pendulum mass (kg)
-    b1: float = 1.0e-3     # arm viscous friction (N·m·s/rad)
-    b2: float = 5.0e-4     # pendulum viscous friction (N·m·s/rad)
-    tau_max: float = 0.5   # max motor torque (N·m)
+    m1: float = 0.080      # arm mass (kg)   — 80 g aluminium arm rod
+    L2: float = 0.25       # pendulum length (m)
+    m2: float = 0.040      # pendulum mass (kg) — 40 g pendulum rod
+    b1: float = 5.0e-4     # arm viscous friction (N·m·s/rad)  — ball-bearing pivot
+    b2: float = 1.0e-4     # pendulum viscous friction (N·m·s/rad)
+    tau_max: float = 0.15  # max motor torque (N·m) — realistic for GBM2804H-100T
 
     # ------------------------------------------------------------------ #
     # Derived quantities — computed from the primary parameters above      #

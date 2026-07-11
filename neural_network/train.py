@@ -56,9 +56,14 @@ from envs import FurutaEnv
 # Difficulty: 0.0=±5°, 0.15=±30°, 0.50=±90°, 1.0=full random
 BALANCE_CURRICULUM = [
     # (ep_rew_mean threshold, new_difficulty, new_max_steps)
-    (-20,  0.15,  500),   # holding ±5°/0.4s well  → widen to ±30°/1s
-    (-50,  0.50, 1000),   # holding ±30°/1s well   → widen to ±90°/2s
-    (-100, 1.00, 2000),   # holding ±90°/2s well   → full random/4s
+    # Reward is cos(theta_err) - 0.1*(w1_norm)² per step, range ≈ [-1.1, +1.0].
+    # Stage 0: ±5°,  200 steps → max episode = +200.  Advance when avg ≥ 150.
+    # Stage 1: ±30°, 500 steps → max episode = +500.  Advance when avg ≥ 350.
+    # Stage 2: ±90°, 1000 steps → max episode = +1000. Advance when avg ≥ 700.
+    # Stage 3: full random, 2000 steps → final difficulty.
+    (150,  0.15,  500),   # holding ±5°/0.4s well   → widen to ±30°/1s
+    (350,  0.50, 1000),   # holding ±30°/1s well    → widen to ±90°/2s
+    (700,  1.00, 2000),   # holding ±90°/2s well    → full random/4s
 ]
 
 # Number of recent episodes required before checking the threshold.
@@ -155,17 +160,17 @@ def train(
         env=train_env,
         learning_rate=3e-4,
         n_steps=2048,           # steps per env per update
-        batch_size=64,
+        batch_size=256,         # larger batch → more stable gradient estimates
         n_epochs=10,
-        gamma=0.99,             # discount — care about long-term balance
+        gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.005,         # small entropy bonus to prevent premature convergence
+        ent_coef=0.01,          # small entropy bonus — just enough to prevent collapse
         vf_coef=0.5,
         max_grad_norm=0.5,
         policy_kwargs=policy_kwargs,
         tensorboard_log="logs",
-        verbose=1,
+        verbose=0,
     )
 
     # ------------------------------------------------------------------ #
@@ -174,7 +179,7 @@ def train(
     callbacks = []
 
     if mode == "balance":
-        pass  # no curriculum — cosine reward gives useful gradient from any angle
+        pass  # curriculum disabled — cosine reward gives useful gradient from ±45°
 
     if save:
         best_model_path = f"models/{mode}_best"
@@ -183,7 +188,7 @@ def train(
                 eval_env,
                 best_model_save_path=best_model_path,
                 log_path=f"logs/{mode}_eval",
-                eval_freq=max(10_000 // n_envs, 1),
+                eval_freq=max(50_000 // n_envs, 1),
                 n_eval_episodes=10,
                 deterministic=True,
                 verbose=1,

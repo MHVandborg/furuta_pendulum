@@ -204,17 +204,20 @@ class FurutaEnv(gym.Env):
             self._params = self._nominal_params
 
         if self.mode == "balance":
-            # Start within ±30° of upright with physically realistic velocities.
-            # The handoff from swing-up always happens near vertical (±20°) with
-            # the pendulum still moving upward — so velocity is small and bounded.
-            # We train slightly wider (±30°) than the handoff angle for robustness.
-            max_angle = np.radians(30.0)
+            # difficulty=0.0 → ±5°  (easy, just above handoff threshold)
+            # difficulty=1.0 → ±180° (fully random)
+            # Linear interpolation gives ±45° at difficulty=0.23, matching the
+            # swing-up handoff window (±20°) plus a robustness margin.
+            max_angle = np.radians(5.0) + self.difficulty * np.radians(175.0)
             theta2_err = self._rng.uniform(-max_angle, max_angle)
             theta2 = np.pi + theta2_err
-            # Arm: moderate velocity from swing-up spinning
-            w1 = self._rng.uniform(-3.0, 3.0)
-            # Pendulum: small velocity — near top it has low speed
-            w2 = self._rng.uniform(-1.5, 1.5)
+            # Velocities scale with difficulty: near-zero when starting close to
+            # upright (easy), full range when starting from arbitrary angles (hard).
+            # This mirrors what the real handoff looks like at each stage.
+            max_w1 = 3.0 * self.difficulty   # arm:      0–3 rad/s
+            max_w2 = 1.5 * self.difficulty   # pendulum: 0–1.5 rad/s
+            w1 = self._rng.uniform(-max_w1, max_w1) if max_w1 > 0 else 0.0
+            w2 = self._rng.uniform(-max_w2, max_w2) if max_w2 > 0 else 0.0
         else:
             # Swing-up: always start near hanging (θ₂ ≈ 0) with a small random kick.
             # The agent's job is to reach vertical from the natural resting position.
@@ -291,8 +294,12 @@ class FurutaEnv(gym.Env):
         if self.mode == "balance":
             # Cosine reward: +1 upright, 0 at 90°, -1 hanging.
             # Smooth gradient everywhere — works from any starting angle.
-            # Small arm-velocity penalty discourages unnecessary spinning.
-            return float(np.cos(theta2_err)) - 0.01 * w1 ** 2
+            # Arm-velocity penalty uses the same normalised & clipped velocity
+            # as the observation so the agent can always correlate what it sees
+            # with what it gets penalised for.  Clipped to [-1, 1] → penalty
+            # stays in [0, 0.1], never dominating the angle reward.
+            w1_norm = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
+            return float(np.cos(theta2_err)) - 0.1 * w1_norm ** 2
         else:
             # Cosine reward: +1 when upright, -1 when hanging.
             # No arm-velocity penalty — the agent must spin freely to pump energy.
