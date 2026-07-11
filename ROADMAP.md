@@ -23,6 +23,10 @@ Validate every sensor and actuator in isolation before integrating the controlle
 
 - [ ] I2C0 driver → read AS5600 arm encoder angle (SERCOM0, PA00/PA01)
 - [ ] I2C1 driver → read AS5600 pendulum encoder angle (SERCOM4, PB08/PB09)
+- [ ] Pendulum encoder zero calibration on boot: let pendulum hang still, record raw
+  count as `zero_offset`, compute `θ₂ = (raw − zero_offset) / 4096 × 2π` from
+  then on. The network convention is θ₂=0 at hanging, θ₂=π at upright — if this
+  offset is wrong the controller will drive the motor the wrong way.
 - [ ] TCC0 3-phase PWM + DRV8313 startup sequence (EN, SLEEP, RESET, FAULT)
 - [ ] Command a known torque and verify motor moves
 - [ ] Log encoder angles + motor response continuously over USB CDC

@@ -1,0 +1,1822 @@
+
+--- PAGE 1 ---
+ 
+Department of Automatic Control 
+ 
+Robust Reinforcement Learning Control 
+of a Furuta Pendulum 
+Philip Olhager 
+
+--- PAGE 2 ---
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+MSc Thesis 
+TFRT-6150 
+ISSN 0280-5316 
+Department of Automatic Control 
+Lund University 
+Box 118 
+SE-221 00 LUND 
+Sweden 
+© 2021 by Philip Olhager. All rights reserved. 
+Printed in Sweden by Tryckeriet i E-huset 
+Lund 2021 
+ 
+
+--- PAGE 3 ---
+Abstract
+The use of Reinforcement Learning (RL) to design controllers for safety criti-
+cal systems is an important research area. On the one hand, RL can function
+in and adapt to complex and changing environments without requiring a
+model of the system. On the other hand, in such systems robustness is of
+high importance, as well as ways to guarantee and certify a level of robust-
+ness. This project investigates state-of-the-art methods for training for and
+evaluating robustness in a neural network, when applied to RL control of
+a real-world system. The use of Projected Gradient Descent (PGD) as an
+adversary for robust Deep RL, as well as the Lipschitz constant as a measure
+of a neural network controller’s robustness, are evaluated.
+The study is conducted by training an agent to perform swing-up and
+balancing of a Furuta pendulum, and further training it with PGD of varying
+magnitudes as an adversary. The agents are evaluated by their robustness
+towards normally-distributed measurement noise as well as their estimated
+Lipschitz constant.
+The results show that while training with PGD does result in better ro-
+bustness for a classiﬁer on the MNIST dataset, applying the technique to the
+Furuta pendulum in a Deep Reinforcement Learning setting is not so simple.
+One of 30 agents managed to outperform the baseline agent, indicating that
+while the technique may have some promise, further ﬁne-tuning of the train-
+ing process is necessary. Further, the Lipschitz constant did not correlate
+with robustness performance, indicating that it may not be an ideal measure
+of a neural network’s robustness.
+3
+
+--- PAGE 4 ---
+
+
+--- PAGE 5 ---
+Acknowledgements
+I would like to thank Richard Pates and Johan Grönqvist for supervising the
+project, and suggesting the topic. I would also like to thank Anders Nilsson
+and Anders Blomdell for their help in interfacing with a physical pendulum,
+experiments with which could unfortunately not be incorporated in the ﬁnal
+report due to time constraints.
+5
+
+--- PAGE 6 ---
+
+
+--- PAGE 7 ---
+Contents
+Acronyms 9
+1. Introduction 10
+1.1 Background . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+1.2 Problem Description . . . . . . . . . . . . . . . . . . . . . . 12
+2. Theory 13
+2.1 Furuta pendulum . . . . . . . . . . . . . . . . . . . . . . . . 13
+2.2 Classical controller . . . . . . . . . . . . . . . . . . . . . . . 15
+2.3 Reinforcement Learning controller . . . . . . . . . . . . . . . 17
+2.4 Lipschitz constants . . . . . . . . . . . . . . . . . . . . . . . 23
+3. Method 27
+3.1 MNIST . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27
+3.2 Furuta pendulum . . . . . . . . . . . . . . . . . . . . . . . . 28
+4. Results 33
+4.1 MNIST . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 33
+4.2 Furuta pendulum . . . . . . . . . . . . . . . . . . . . . . . . 36
+5. Discussion and Conclusion 39
+5.1 MNIST . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 39
+5.2 Furuta pendulum . . . . . . . . . . . . . . . . . . . . . . . . 40
+5.3 Conclusions . . . . . . . . . . . . . . . . . . . . . . . . . . . 42
+Bibliography 43
+A. MOSEK formulation of Lipschitz SDP 45
+B. T able of F uruta results 47
+C. F uruta pendulum plots 49
+7
+
+--- PAGE 8 ---
+
+
+--- PAGE 9 ---
+Acronyms
+CPU Central Processing Unit
+DDPG Deep Deterministic Gradient Descent
+DQN Deep Q-Network
+FGSM Fast Gradient Sign Method
+GPU Graphics Processing Unit
+LQR Linear Quadratic Regulator
+MDP Markov Decision Process
+MSE Mean-Square Error
+NaN Not a Number
+NN (Artiﬁcial) Neural Network
+PGD Projected Gradient Descent
+RAM Random Access Memory
+ReLU Rectiﬁed Linear Unit
+RL Reinforcement Learning
+SARS State, Action, Reward, next State
+SAR TSState, Action, Reward, Terminal, next State
+SDP Semi-Deﬁnite Program
+VRAM Video Random Access Memory
+9
+
+--- PAGE 10 ---
+1
+Introduction
+Figure 1.1: A Furuta pendulum.
+1.1 Background
+Machine Learning techniques, in particular Reinforcement Learning (RL),
+have been gaining interest within control applications due to their ability to
+function in complex and changing environments. Deep Reinforcement Learn-
+ing is a subset of these techniques which uses neural networks instead of
+the more traditional lookup tables. Lookup tables store one action for each
+possible combination of observations, which requires a discrete observation
+space. Neural networks, on the other hand, allow the methods to handle con-
+tinuous observations and in some cases continuous actions, which is often the
+10
+
+--- PAGE 11 ---
+1.1 Background
+case in control applications. Model-free deep RL methods, like DQN (Deep
+Q-Network) [Mnih et al., 2013] and DDPG (Deep Deterministic Policy Gra-
+dient) [Lillicrap et al., 2015] are of particular interest since they allow for
+implementation on systems that are diﬃcult to model or entirely unknown.
+Due to these models’ adaptability, safety-critical systems is an interesting
+application. In order to function in such applications, the controller must
+have a certain level of robustness. In particular, the controller should have a
+certiﬁed and guaranteed level of robustness.
+There have been recent eﬀorts within the control community to analyze,
+improve and guarantee levels of robustness for neural network controllers.
+An important example is [Fazlyab et al., 2019] which presents a method to
+estimate the Lipschitz constant for a deep neural network. The Lipschitz
+constant is typically used as a robustness certiﬁcation metric of sorts within
+control theory, and [Fazlyab et al., 2019] is a step towards applying this
+concept to neural networks. One popular method for improving robustness
+during training of neural networks is the concept of adversarial attacks, pro-
+viding the network with some form of worst-case perturbations on the inputs
+during training. [Huang et al., 2017] applied the Fast Gradient Sign Descent
+(FGSM) method [Goodfellow et al., 2015] to a Deep RL setting. FGSM is a
+single gradient step with a ﬁxed step size, making it a basic ﬁrst-order ad-
+versary. [Pattanaik et al., 2017] added a variable step-size by sampling noise
+from a beta distribution. This introduces some stochasticity in the training
+process, which gave better results. [Oikarinen et al., 2020] augmented the loss
+function itself to account for worst-case perturbations, moving the robust-
+ness training from environment interaction into the network updates. [Madry
+et al., 2019] proposed the projected gradient descent as the "ultimate" ﬁrst-
+order adversary to a neural network and applied it to image classiﬁcation
+on the MNIST [LeCun and Cortes, 2010] and CIFAR-10 [Krizhevsky, 2009]
+datasets. This method proved eﬀective at improving the robustness of the
+classiﬁers. It has yet to be tested for Reinforcement Learning schemes, but
+due to its eﬀectiveness for supervised learning and its theoretical strength
+as a ﬁrst-order adversary, it was chosen as the method to be used in this
+project.
+The Furuta pendulum [Furuta et al., 1991], see Figure 1.1, is an exten-
+sion of the swing-up cartpole experiment, which is a very commonly used
+benchmark within control literature. It is highly non-linear and oﬀers a chal-
+lenging environment for the controller to operate in. At the same time, there
+are methods to extract a highly functional controller using classical theoret-
+ical methods, which provides a good comparison for the rl controllers.
+11
+
+--- PAGE 12 ---
+Chapter 1. Introduction
+1.2 Problem Description
+The primary goal of this project is to take the theoretical results of [Fazlyab
+et al., 2019] and [Madry et al., 2019], which demonstrated that PGD training
+reduces the Lipschitz constant and improves robustness of neural networks,
+and investigate how this transfers to an RL controller of a physical system.
+This will be the ﬁrst attempt at using PGD for adversarial training on Re-
+inforcement Learning. In doing this, we will investigate its eﬀectiveness at
+improving the robustness and/or reducing the Lipschitz constant of the con-
+troller, as well as the relation between the controller’s Lipschitz constant and
+its robustness for a practical system. To do this, we will ﬁrst demonstrate the
+method on the simpler case of image classiﬁcation on the MNIST dataset. We
+will then train a DDPG agent on a simulated Furuta pendulum and augment
+it with PGD training with varying perturbation bounds. These augmented
+agents will be analyzed with respect to their robustness to measurement noise
+in simulation and on a physical process as well as their estimated Lipschitz
+constants, and compared to the classical controller and the baseline agent.
+The questions we seek to answer are these:
+• Does PGD training increase robustness to measurement noise in a
+DDPG controller of a Furuta pendulum?
+• Does PGD training reduce the Lipschitz constant of a DDPG controller
+of a Furuta pendulum?
+• DoestheLipschitzconstantofaDDPGcontrollerofaFurutapendulum
+correlate with its robustness to measurement noise?
+12
+
+--- PAGE 13 ---
+2
+Theory
+In this section, relevant theory concerning the Furuta pendulum, the classical
+controller, the RL controller and Lipschitz constants, is presented.
+2.1 Furuta pendulum
+Figure 2.1: The Furuta pendulum. [Gäfvert, 1998]
+The Furuta pendulum [Furuta et al., 1991] consists of a pendulum attached
+to the end of a rotating arm, see Figure 2.1. The pendulum has uniformly
+distributed massmp and lengthlp, the arm has uniformly distributed mass
+ma and lengthla, and the center pillar has moment of inertiaJ. At the end
+of the pendulum is a spherical massM. The pendulum angleθ is deﬁned
+such thatθ = 0 corresponds to the upright position. The derivation for the
+equations of motion is given in [Gäfvert, 1998].
+13
+
+--- PAGE 14 ---
+Chapter 2. Theory
+Deﬁning
+
+
+
+α =J +
+(
+M + 1
+3ma +mp
+)
+l2
+a,
+β =
+(
+M + 1
+3mp
+)
+l2
+p,
+γ =
+(
+M + 1
+2mp
+)
+lalp,
+δ =
+(
+M + 1
+2mp
+)
+glp,
+(2.1)
+the equations of motion can be written as
+{
+v = (α +β sin2θ)¨φ +γ cosθ¨θ + 2β cosθ sinθ ˙φ ˙θ−γ sinθ ˙θ2,
+0 =γ cosθ ¨φ +β¨θ−β cosθ sinθ ˙φ2−δ sinθ, (2.2)
+where v contains the (possibly rescaled) torques and forces applied to the
+arm joint. Rewriting this to the standard form of˙ x= f(x) yields
+d
+dtθ = ˙θ,
+d
+dt
+˙θ = 1
+αβ−γ + (β2 +γ2) sin2θ
+(
+β(α +β sin2θ) cosθ sinθ ˙φ2
++ 2βγ(1− sin2θ) sinθ ˙φ ˙θ−γ2 cosθ sinθ ˙θ2 +δ(α +β sin2(θ)) sinθ−γ cosθv
+)
+,
+d
+dtφ = ˙φ,
+d
+dt
+˙φ = 1
+αβ−γ + (β2 +γ2) sin2θ
+(
+βγ(sin2θ− 1) sinθ ˙φ2
+− 2β2 cosθ sinθ ˙φ ˙θ +βγ sinθ ˙θ−γδ cosθ sinθ +βv
+)
+.
+(2.3)
+This is the state-space description used in the simulation of the pendu-
+lum. Linearizing this system at the equilibrium pointx0 = [θ0, ˙θ0,φ, ˙φ0]⊤ =
+[0, 0, 0, 0]⊤ (i.e. upright stationary pendulum) yields the matrices
+A =
+
+
+0 1 0 0
+αδ
+αβ−γ2 0 0 0
+0 0 0 1
+− δγ
+αβ−γ2 0 0 0
+
+, B =
+
+
+0
+− γ
+αβ−γ2
+0
+β
+αβ−γ2
+
+. (2.4)
+The eigenvalues of thisA matrix are
+{
+0, 0,±
+√
+αδ
+αβ−γ2
+}
+. (2.5)
+14
+
+--- PAGE 15 ---
+2.2 Classical controller
+One can verify that in the limit caseJ,ma→∞ and mp→ 0 the open-loop
+poles for a simple pendulum are restored:
+√
+αδ
+αβ−γ2→
+√g
+lp
+. (2.6)
+There exists signiﬁcant friction in theφ-joint. This friction is modelled in the
+following way:
+uF =
+
+
+
+τC sgn ˙φ if ˙φ̸= 0,
+u if ˙φ = 0 and|u|<τ S,
+τS sgnu0 otherwise,
+(2.7)
+with v = u−uF, u being the nominal control signal, andτC and τS being
+coeﬃcients for Coulomb friction and stiction respectively.
+2.2 Classical controller
+Designing a classical controller as a baseline for the swing-up problem can be
+broken down into two steps: designing a balancing controller once the pen-
+dulum is upright and designing a controller to make the pendulum swing up.
+Designing a balancing controller can be done using various linear methods,
+as the pendulum can be accurately linearized for small angle deviations. The
+method of choice here is the Linear Quadratic Regulator (LQR). Designing
+a swing-up controller is slightly more involved, as the system cannot be lin-
+earized due to large angle deviations. The method used here is commonly
+referred to as Lyapunov based design or energy shaping control.
+LQR
+Given a discrete-time LTI (Linear, Time-Invariant) system
+xk+1 = Φxk + Γuk, (2.8)
+the LQR method deﬁnes a quadratic cost function
+J(x, u) =
+T∑
+k=0
+(x⊤
+k Qxk + u⊤
+k Ruk + 2x⊤
+k Nuk), (2.9)
+where Q, R and N are chosen weight matrices, and formulates ﬁnding the
+control law as an optimization problem:
+min
+u
+J(x, u)
+s.t. xk+1 = Φxk + Γuk, k= 0, 1,...,T.
+(2.10)
+15
+
+--- PAGE 16 ---
+Chapter 2. Theory
+The solution to this problem is given byuk =−Kkxk with K given recur-
+sively by the (discrete-time) Riccati equation:
+{
+Kk = (Γ⊤Sk+1Γ + R)−1(Φ⊤Sk+1Φ + N)⊤,
+Sk = Φ⊤Sk+1Φ⊤ + Q− (Φ⊤Sk+1Γ + N)(Γ⊤Sk+1Γ + R)−1(Φ⊤Sk+1Γ + N)⊤.
+(2.11)
+As the time horizon approaches inﬁnity,Sk and Kk approach the stationary
+S and K, and are given by the (discrete-time) algebraic Riccati equation:
+{
+K = (Γ⊤SΓ + R)−1(Φ⊤SΦ + N)⊤,
+S = Φ⊤SΦ⊤ + Q− (Φ⊤SΓ + N)(Γ⊤SΓ + R)−1(Φ⊤SΓ + N)⊤.
+(2.12)
+To design a controller this way, one simply chooses the matricesQ, R and
+N, and solves the Riccati equation using some numerical method. The result
+is an optimal linear state-feedback controllerK, with the control signal given
+by u =−Kx.
+Lyapunov based design
+To design a controller using Lyapunov based design, ﬁrst consider the Lya-
+punov stability theorem:
+Theorem 2.1. Given a system ˙x = f(x) with an equilibrium pointx∗ and
+a functionV (x) deﬁned onΩ, if
+i) V (x) = 0 for x = x∗,
+ii) V (x)> 0 for x̸= x∗,
+iii) ˙V (x) =∇V (x)⊤f(x)≤ 0 for all x∈ Ω,
+then x∗ is stable. If instead of (iii) we have
+iv) ˙V (x)< 0 for all x∈ Ω : x̸= x∗,
+then x∗ is locally asymptotically stable. If instead of (iii) and (iv) we have
+v) ˙V (x)< 0 for all x∈ Ω : x̸= x∗, Ω = Rn and V (x)→∞ as∥x∥2→∞ ,
+then x∗ is globally asymptotically stable.
+Applying this theorem is typically done by choosing a candidate Lyapunov
+function and testing which parts of the theorem the function fulﬁl. If a func-
+tion fulﬁls requirementsi)andii), and its time derivative contains the control
+signalu, one can design thisu to achieve ˙V <0,x̸=x∗, guaranteeing asymp-
+totic convergence to the desired equilibrium point. To do this for the Furuta
+16
+
+--- PAGE 17 ---
+2.3 Reinforcement Learning controller
+pendulum, approximate the model by a planar pendulum, simplifying the
+equations of motion to
+¨θ = mpglp
+Jp
+sinθ−umplp
+Jp
+cosθ. (2.13)
+Deﬁningω0 =
+√
+mpglp
+Jp
+simpliﬁes this further to
+¨θ =ω2
+0 sinθ−uω2
+0
+g cosθ. (2.14)
+The total energy (kinetic energy + potential energy) of the simpliﬁed pen-
+dulum is
+E =mpglp(cosθ− 1) +Jp
+2
+˙θ2 = cosθ− 1 + 1
+2ω2
+0
+˙θ2. (2.15)
+Taking our candidate Lyapunov function to beV (x) = E(x)2 with x =
+[θ, ˙θ]⊤∈ Ω = [(−π,π ], (−∞,∞)], x∗ = [0, 0]⊤ fulﬁls conditions(i) and (ii)
+of the Lyapunov stability theorem. Taking the time derivative ofV gives
+˙V (x) =∇V (x)⊤f(x)
+= 2
+(
+cosθ− 1 + 1
+2ω2
+0
+˙θ2
+)[
+− sinθ
+˙θ
+ω2
+0
+][ ˙θ
+ω2
+0
+(
+sinθ− u
+g cosθ
+)
+]
+= − 2
+gu ˙θ cosθ
+(
+cosθ− 1 +
+˙θ2
+2ω2
+0
+)
+. (2.16)
+We now wish to chooseu such that the above quantity is nonpositive for all
+θ and ˙θ. There are many ways to do this, but in this project the expression
+u =K
+˙θ cosθ
+(
+cosθ− 1 +
+˙θ2
+2ω2
+0
+)
+b +
+⏐⏐⏐ ˙θ cosθ
+(
+cosθ− 1 +
+˙θ2
+2ω2
+0
+)⏐⏐⏐
+, (2.17)
+where K,b> 0 are tunable parameters, was used.
+2.3 Reinforcement Learning controller
+Reinforcement Learning
+A Reinforcement Learning setup consists of an agent and an environment.
+The agent takes actions based on observations provided by the environment,
+and the environment returns a reward based on a predetermined reward
+17
+
+--- PAGE 18 ---
+Chapter 2. Theory
+function, as well as updated observations. The agent aims to take actions
+that maximize the rewards. An environment is deﬁned as a Markov Decision
+Process (MDP), consisting of the tuple (S,A,P,R,γ ) whereS is the set of
+possible states,A is the set of possible actions,P :S×A×S→ R are the
+state transition probabilities, R :S×A→ R is the reward function and
+γ∈ [0, 1] is the discount factor. An RL algorithm aims to learn a (possibly
+stochastic) policyπ :S×A→ R which describes the probabilities of taking
+each possible action given a state. This policy then governs the actions taken
+by the agent. The policy is learned by attempting to maximize the long-term
+discounted rewardGt =∑∞
+k=0γkrt+k+1 wheret is the current time step and
+ri is the reward received at timestepi. This is typically done by deﬁning the
+action-value functionqπ :S×A→ R which gives the expected value ofGt
+given the current stateSt, and actionAt, and using the Bellman equation to
+compute this function recursively
+qπ(s,a ) = Eπ[rt +γqπ(St+1,At+1)|St =s,At =a]. (2.18)
+In the most basic form, with discrete observation and action spaces,q can
+be deﬁned as a lookup table. Constructing this function requires explicit
+knowledge about the transition probabilities of the environment, which is
+not always available. A model-free version of this is called Q-learning, which
+aims to learn a functionQ approximatingq by interacting with the environ-
+ment and observing rewards. During interaction with the environment, state
+transitions are recorded in the form of the tuple(si,ai,ri,si+1), wheresi is
+the observed state,ai is the action taken by the actor andri is the reward
+obtained at timei. This format of recording transitions is called SARS.Q
+then uses the following update formula, based on the Bellman equation:
+Q(k+1)(si,ai) =Q(k)(si,ai) +α
+(
+ri +γmax
+a
+{Q(k)(si+1,a )}− Q(k)(si,ai)
+)
+,
+(2.19)
+where α is a learning rate.
+Artiﬁcial Neural Networks
+An artiﬁcial neural network (ANN or NN) is an attempt to mimic the inner
+workings of the human brain. It consists of a number of "neurons" in diﬀerent
+layers connected by weighted "synapses". See Figure 2.2 for an illustration.
+Each neuron receives the weighted outputs from the previous layers as inputs
+and applies an "activation function" to the sum of the inputs.
+18
+
+--- PAGE 19 ---
+2.3 Reinforcement Learning controller
+Figure 2.2: A conceptual illustration of a neural network.
+Given inputs x, weight matricesWk and activation functionsϕk(·), for an
+NNwith nhiddenlayerstheoutputsofthe1sthiddenlayeris h1 =ϕ1(W1x),
+of thekth hidden layerhk =ϕk(Wkhk−1) and of the entire network isy =
+ϕo(Wn+1hn). Typically layers share activation functions, possibly except
+for the output layer. The three activation functions used in this project are
+ReLU (Rectiﬁed Linear Unit), tanh and the linear functionf(x) =x. ReLU
+is deﬁned as
+ϕ(x) =
+{
+x if x≥ 0,
+0 otherwise. (2.20)
+Traininganeuralnetworkisdonebyupdatingtheweightmatricesusingerror
+backpropagation and a speciﬁed loss function. The loss function represents
+some quantity that the NN should minimize. A common example used in
+supervised learning is the mean-square error (MSE), given by
+L = 1
+N
+N∑
+i=1
+∥ˆy− y∥2
+2, (2.21)
+where y is the network’s output andˆy is the desired output. To perform the
+error backpropagation an optimization method, often called an optimizer,
+is used. In this project, Adam [Kingma and Ba, 2014] is used for baseline
+training and Optimistic Adam [Daskalakis et al., 2017] is used for adversarial
+training.
+Deep Deterministic Policy Gradient (DDPG)
+The full DDPG training scheme is presented in algorithm 1.
+The DDPG is an actor-critic method using neural networks as the ac-
+tor and the critic, speciﬁcally designed to handle continuous action spaces
+19
+
+--- PAGE 20 ---
+Chapter 2. Theory
+[Lillicrap et al., 2015]. The method utilizes two sets of actor/critic networks,
+where one set is updated much slower and is called the target network. Dur-
+ing training, the agent interacts with the environment through actions taken
+by the actor. At each time-step the transition is saved in a replay buﬀerR
+of ﬁnite size in the form of SARTS tuples:(si,ai,ri,ti,si+1), wheresi is the
+observed state,ai is the action taken,ri is the reward, andti is 1 if the explo-
+ration terminated and 0 if not, at timei. When updating the networks, these
+tuples, sometimes called experiences or trajectories, are randomly sampled
+in mini-batches.
+The actor network is updated based on the assumption that the output
+of the value network is continuously diﬀerentiable with respect to the ac-
+tor network’s parameters. The expected returnJ = E[Q(s,µ (s|θµ)|θQ)] is
+diﬀerentiated with respect toθµ using the chain rule:
+∇θµJ = E[∇θµQ(s,µ (s|θµ)|θQ)]
+= E[∇µQ(s,µ (s|θµ)|θQ)∇θµµ(s|θµ)]. (2.22)
+Thus the loss function used is
+Lµ
+A =− 1
+N
+N∑
+i=1
+Q(si,µ (si|θµ)|θQ), (2.23)
+where N is the number of samples in the mini-batch. The critic network
+Q(s,a|θQ) is, as in Q-learning, updated using an MSE loss function
+LQ
+MSE = 1
+N
+N∑
+i=1
+(
+yi−Q(si,ai|θQ)
+)2
+, (2.24)
+where yi is given by the Bellman equation:
+yi =ri +γQ′(si+1,µ′(si+1|θµ′
+)|θQ′
+)(1−ti), (2.25)
+with Q′ and µ′ being the target critic and target actor respectively. The
+parameters of the target networks are then updated asθ′←τθ + (1−τ)θ′,
+with 0<τ ≪ 1.
+In order to make the training more eﬃcient (and actually converge at all)
+a demonstration system was implemented using ideas from [Nair et al., 2017]
+and [Goecks et al., 2019]. A second replay buﬀerRd, called the demonstration
+buﬀer, was initialized with state transitions performed by an "expert", in this
+case the classical controller. A second loss function was added to the actor:
+Lµ
+BC = 1
+2ND
+ND∑
+j=1
+(
+ad
+j−µ(sd
+j|θµ)
+)2
+cj, (2.26)
+20
+
+--- PAGE 21 ---
+2.3 Reinforcement Learning controller
+where sd
+j and ad
+j are states and actions from transitions inRd, and
+cj =
+{
+1 if Q(sd
+j,ad
+j)>Q (sd
+j,µ (sd
+j)),
+0 otherwise. (2.27)
+cj exists to acknowledge that the demonstrations may not be perfect, so if
+the agent determines that its own action is better then this portion of the
+loss function will be discarded for that sample. During updating, 25% of
+the samples are taken fromRd and 75% fromR. In addition, the agent is
+pretrained using only expert demonstrations before it gets to explore the
+environment. In the pretraining step,cj = 0 is used. Weight regularization
+terms were also added to the loss functions of both actor and critic. The full
+loss functions used were thus
+Lµ =Lµ
+A +Lµ
+BC +Lµ
+R =
+− 1
+N
+N∑
+i=1
+Q(si,µ (si|θµ)|θQ) + 1
+2ND
+ND∑
+j=1
+(
+ad
+j−µ(sd
+j|θµ)
+)2
+cj + 1
+4∥θµ∥2
+2,
+LQ =LQ
+MSE +LQ
+R = 1
+N
+N∑
+i=1
+(
+yi−Q(si,ai|θQ)
+)2
++ 1
+2
+θQ2
+2.
+(2.28)
+Projected Gradient Descent
+Given a functionf(x), the projected gradient descent (PGD) method seeks
+to minimizef using successive steps on the form
+xt+1 = Πx+S
+(
+xt−α sgn(∇f(xt))
+)
+, (2.29)
+where Πx+S signiﬁes projection onto a ball of some vector space centered
+on x. If f is the loss function of some neural network, PGD can be used
+as an eﬀective adversary by maximizingf. As presented in [Madry et al.,
+2019], in the case of supervised learning, the loss function is of the form
+f = L(θ,x,m (x)), withm(x) being the output of the networkm, and the
+PGD step is
+xt+1 = Πx+S
+(
+xt +α sgn(∇xtL(θ, xt,m (xt))
+)
+. (2.30)
+Here,S is anl∞-ball of some sizeε >0. For Reinforcement Learning, and
+speciﬁcally an actor-critic method, the objective is to perturb the state that
+theactorisgiveninsuchawaythatittakesasuboptimalaction.Thefunction
+to be minimized is the critic’s evaluation of the actor’s action,Q(s,µ (s)).
+21
+
+--- PAGE 22 ---
+Chapter 2. Theory
+Algorithm 1: DDPG training scheme with demonstrations
+Data: Pre-training stepsL, number of episodesM, steps per
+episode T, batch sizeN, exploration noise levelσ, Polyak
+averaging constantτ.
+Randomly initialize criticQ(s,a|θQ) and actorµ(s|θµ) with weights
+θQ and θµ.
+Initialize target networksQ′ andµ′ with weightsθQ′
+←θQ,θµ′
+←θµ.
+Initialize replay buﬀerR and demonstration buﬀerRd with
+trajectories from the expert.
+for pre-training step = 1 ...Ldo
+Randomly sample a minibatch ofN transitions
+(sd
+i,ad
+i,rd
+i,td
+i,sd
+i+1) fromRd.
+Update critic networkQ by minimizing the lossLQ.
+Update actor networkµ by minimizing the lossLµ.
+Update target networks:
+θQ′
+←τθQ + (1−τ)θQ′
+θµ′
+←τθµ + (1−τ)θµ′
+end
+for episode = 1 ...M do
+Reset environment.
+Receive initial observation states1.
+for k=1...T do
+Select actionak =µ(sk|θµ) +Nk withNk∼N(0,σ 2).
+Execute actionak, observe rewardrk, termination statustk
+and new statesk+1.
+Store transition (sk,ak,rk,tk,sk+1) inR.
+Randomly sample a minibatch of0.75N transitions
+(si,ai,ri,ti,si+1) fromR and 0.25N transitions
+(sd
+i,ad
+i,rd
+i,td
+i,sd
+i+1) fromRd.
+Update critic networkQ by minimizing the lossLQ.
+Update actor networkµ by minimizing the lossLµ.
+Update target networks:
+θQ′
+←τθQ + (1−τ)θQ′
+θµ′
+←τθµ + (1−τ)θµ′
+end
+end
+22
+
+--- PAGE 23 ---
+2.4 Lipschitz constants
+Given an initial states0, ﬁnding an adversarial state to give the actor is
+done with the following PGD step:
+sk+1 = Πs0+S
+(
+sk−α sgn(∇skQ′(s0,µ (sk)))
+)
+. (2.31)
+Again,S is an l∞-ball of some sizeε > 0. Typically in similar implemen-
+tations, such as [Pattanaik et al., 2017], the target criticQ′ is used instead
+of the behavior criticQ, which is what is done in this project. It should be
+noted that in this project, the environment is a pendulum, and observations
+of the pendulum angle are given in sine and cosine; while the state of the en-
+vironment is (θ, ˙θ,φ, ˙φ), the observations given to the agent are on the form
+(sinθ, cosθ, ˙θ,φ, ˙φ). Since logically the adversary should perturb the angle
+itself, as opposed to the sine and cosine, the PGD algorithm is performed
+on the state rather than the observation. The full PGD algorithm for the
+pendulum is given in algorithm 2.
+Algorithm 2: Projected Gradient Descent for the Furuta pendulum
+Data: Initial statex0 = (θ0, ˙θ0,φ 0, ˙φ0), actor networkµ, target critic
+networkQ′, ε, number of stepsn.
+Set initial observation base on initial state:
+s0← (sinθ0, cosθ0, ˙θ0,φ 0, ˙φ0)
+x1←x0
+Set step length:α← 2.5ε/n
+for k = 1...n do
+Set current observation based on current state:
+sk← (sinθk, cosθk, ˙θk,φk, ˙φk)
+Take one (non-projected) step:
+xk+1←xk−α sgn
+(
+∇xkQ′(s0,µ (sk|θµ)|θQ′
+)
+)
+Project ontol∞-ball: xk+1← clamp(xk+1,x 0−ε1,x 0 +ε1)
+end
+The adversarial training was performed by perturbing the observation
+given to the actor when it takes actions during exploration. The training
+scheme using this method is described in algorithm 3.
+2.4 Lipschitz constants
+A Lipschitz constantL for a functionf, deﬁned onΩ, is deﬁned by
+infL> 0 s.t. ∥f(x)−f(y)∥2≤L∥x− y∥2,∀x, y∈ Ω. (2.32)
+In essence,L is a measure of how quickly the function value can vary; it is
+often called a smoothness constant. In robust control, the Lipschitz constant
+23
+
+--- PAGE 24 ---
+Chapter 2. Theory
+Algorithm 3: Adversarial DDPG training using PGD
+Data: Trained DDPG agent with networksµ,Q,µ′,Q′, number of
+episodes M, steps per episodeT, batch sizeN, Polyak
+averaging constantτ, ε, number of PGD stepsn.
+Initialize replay buﬀerR and demonstration buﬀerRd with
+trajectories from the expert.
+for episode = 1 ...M do
+Reset environment.
+for k=1...T do
+Receive current statexk.
+Perturb current state:˜xk←PGD (xk,µ,Q′,ε,n ).
+Set ˜sk = (sin ˜θk, cos ˜θk, ˜˙θ, ˜φ, ˜˙φ).
+Select actionak =µ(˜sk|θµ) +Nk withNk∼N(0,σ 2).
+Execute actionak, observe rewardrk, termination statustk
+and new statesk+1.
+Store transition (˜sk,ak,rk,tk,sk+1) inR.
+Randomly sample a minibatch of0.75N transitions
+(˜si,ai,ri,ti,si+1) fromR and 0.25N transitions
+(sd
+i,ad
+i,rd
+i,td
+i,sd
+i+1) fromRd.
+Update critic networkQ by minimizing the lossLQ.
+Update actor networkµ by minimizing the lossLµ.
+Update target networks:
+θQ′
+←τθQ + (1−τ)θQ′
+θµ′
+←τθµ + (1−τ)θµ′
+end
+end
+is a tool for estimating how robust a controller is, particularly against mea-
+surement noise. The idea is that a controller with a small Lipschitz constant
+will produce small variations in control output as a response to a varying
+measurement input, and thus not be aﬀected as much by the noise. [Fazlyab
+et al., 2019] recently proposed a method to estimate the Lipschitz constant
+of a neural network. This allows us to in theory evaluate the robustness of a
+neural network controller. The estimation method is summarized here: As-
+suming all activation functions in a network are the same, a neural network
+model can be written compactly as
+Bx =ϕ(Ax + b) and f(x) = Cx + bl, (2.33)
+24
+
+--- PAGE 25 ---
+2.4 Lipschitz constants
+where x = [x0⊤
+x1⊤
+... xl⊤
+]⊤ is the concatenation of the input and the ac-
+tivation values of the network’s layers and the matricesA, B, C and b are
+given by
+A =
+
+
+W0 0 ... 0 0
+0 W1 ... 0 0
+... ... ... ... ...
+0 0 ... Wl−1 0
+
+
+, B =
+
+
+0 In1 0 ... 0
+0 0 In2 ... 0
+... ... ... ... ...
+0 0 0 ... Inl
+
+
+,
+C =
+[
+0 ... 0 Wl
+]
+, b =
+[
+b0⊤
+... bl−1⊤
+]⊤
+.
+(2.34)
+In addition, deﬁne the setTn as
+Tn ={T∈ Sn|T =
+n∑
+t=1
+λiieie⊤
+i +
+∑
+1≤i<j≤n
+λij(ei− ej)(ei− ej)⊤,λij≥ 0},
+(2.35)
+where Sn is the set of n-by-n symmetric matrices, and ei are unit basis
+vectors. With this, the Lipschitz constant of the network can be estimated
+using the following theorem:
+Theorem 2.2. Consider anl-layer fully connected neural network. Letn =∑l
+k=1nk be the total number of hidden neurons and suppose the activation
+functions are slope-restriced in the sector[α,β ]. DeﬁneTn as in(2.35). Deﬁne
+A and B as in(2.34). Consider the matrix inequality
+M(ρ, T) =
+[
+A
+B
+]⊤[
+−2αβT (α +β)T
+(α +β)T −2T
+][
+A
+B
+]
++
+
+
+−ρIn0 0 ... 0
+0 0 ... 0
+... ... ... ...
+0 0 ... (Wl)⊤Wl
+
+
+⪯ 0.
+(2.36)
+If (2.36) is satisﬁed for some(ρ, T)∈ R+×Tn, then
+∥f(x)−f(y)∥2≤√ρ∥x− y∥2,∀x, y∈ Rn0. (2.37)
+In other words,√ρ is a bound on the network’s Lipschitz constant, and
+ρ is given by solving the SDP (2.36). It should be noted that the ReLU
+activation function is slope-restricted on[0, 1] which here givesα = 0,β = 1.
+The method can be adapted by making assumptions on the setTn. As each
+λij is a decision variable, in the base case the variable complexity isO(n2).
+[Fazlyab et al., 2019] refers to this method asLipSDP-Network, and lists
+two alternatives.
+25
+
+--- PAGE 26 ---
+Chapter 2. Theory
+LipSDP-Neuron ignores cross-coupling of neurons and sets T =
+diag(λ11,...,λ nn). This gives a variable complexity ofO(n).
+LipSDP-Layer considers only one constrain per layer, setting T =
+blkdiag(λ1In1,...,λ lTnl). This gives a variable complexity ofO(l).
+As solving SDPs typically has a computational complexity scaling with
+decision variables asO(n3) in the best case, andO(n6) in the worst case,
+keeping variable complexity low is desirable. In this project, theLipSDP-
+Neuron variant is used.
+When solving this problem in Julia, it appeared that Julia’s front-end
+interface for optimization, JuMP, was unable to exploit the sparsity in the
+problem, leading to untenable computation times and memory requirements.
+Instead, the problem was solved using Mosek’s back-end Julia implementa-
+tion, which required the problem to be formulated on a standard form. This
+reformulation is presented in Appendix A.
+26
+
+--- PAGE 27 ---
+3
+Method
+In this section the methodology for training and evaluating the classiﬁers and
+agents is described.
+All code used is available athttps://github.com/polhager/FurutaRL.
+Computational setup
+All training and experiments in this project were conducted using a Ryzen
+5 3600 CPU (6 cores, 12 threads), 16GB of RAM and a NVIDIA 2070 Su-
+per GPU with 8GB of VRAM. Training was performed on the GPU where
+possible. Julia was the programming language used, and MOSEK was used
+to solve the Lipschitz SDP.
+3.1 MNIST
+A neural network with the structure given in Table 3.1 was trained on a set
+of 60 000 images from the MNIST set. A set of 10 000 images was used as the
+testing set. The resolution of the images are 28x28, and so the inputs to the
+network are of size282 = 784. The output is a vector of length 10 containing
+the probability that the input image contains each digit (0-9). The network
+was trained for 10 epochs with a batch size of 16. The network structure was
+chosen because it is similar to the networks tested in [Fazlyab et al., 2019],
+and it achieved a high accuracy on the unperturbed test set (0.974).
+To visualize the eﬀectiveness of PGD as an adversary compared to white
+noise, the accuracy of the baseline model was evaluated on the test set per-
+turbed by Gaussian zero-mean noise with standard deviationsσ∈ [0.0, 0.1],
+as well as by PGD withε∈ [0.0, 0.2]. Since for Gaussian distributions, 95%
+of samples lie within±2σ, usingε = 2σ gives roughly the same interval of
+possible perturbed values, and thus somewhat comparable disturbance lev-
+els. It should be noted that Gaussian noise is not used at all during training
+and only during testing, and PGD is only used during training and not dur-
+27
+
+--- PAGE 28 ---
+Chapter 3. Method
+Table 3.1: Network structure for the classiﬁer used in the MNIST experiment.
+layer neurons activation function
+input 784 -
+1 100 ReLU
+2 100 ReLU
+3 10 Softmax
+ing testing. This comparison is only here to get an idea of how potent PGD
+potentially is.
+The baseline model was then subject to diﬀerent levels of adversarial
+training. It was trained for another 10 epochs with the training set perturbed
+by a PGD adversary, with the diﬀerent values ofε∈{ 0.01, 0.05, 0.1, 0.15}. All
+classiﬁers were evaluated by perturbing the test set with Gaussian zero-mean
+noise with standard deviationsσ∈ [0.0, 2.0]. The accuracy of each model for
+eachσ wasrecordedandplottedagainst σ.Inaddition,theLipschitzconstant
+of each model was estimated.
+3.2 Furuta pendulum
+Environment
+Most of the training and testing was done in a simulated environment. The
+environment implements the state-space system deﬁned in (2.3) and solves it
+using the Runge-Kutta method RK3/8, with a sample time of 0.006s. This
+sample time was chosen since it is the eﬀective sample time of the physical
+process.ParametervaluescanbefoundinTable3.2. τC andτS weremanually
+estimated, max input and dt were chosen, and other values were given by
+[Katz, 2019].
+28
+
+--- PAGE 29 ---
+3.2 Furuta pendulum
+Table 3.2: Parameter values for the Furuta pendulum model.
+quantity value
+J [kg·m2] 0.000154
+M [kg] 0.0
+ma [kg] 0.0
+mp [kg] 0.00544
+la [m] 0.0430
+lp [m] 0.0646
+τC [Nm] 0.0076
+τS [Nm] 0.0080
+max input [a.u.] 0.04
+dt [s] 0.006
+The reward function used for the environment was
+R(x,u ) =−5θ2− 0.05 ˙θ2−φ2− 0.05 ˙φ2− 0.05u2− 10000(|φ|> 2π). (3.1)
+The classical controller used was given by
+u =
+
+
+
+[
+0.8139 0 .0541 0 .0226 0 .0258
+]
+x +uF if|θ|< 0.5,| ˙θ|< 5,
+0.04
+˙θ cosθ
+(
+cosθ− 1 +
+˙θ2
+2ω2
+0
+)
+10 +
+⏐⏐⏐ ˙θ cosθ
+(
+cosθ− 1 +
+˙θ2
+2ω2
+0
+)⏐⏐⏐
+otherwise,
+(3.2)
+with uF given by equation (2.7). The linear part is an LQR controller with
+weight matrices
+Q =
+
+
+100 0 0 0
+0 1 0 0
+0 0 10 0
+0 0 0 10
+
+, R = 100, N = 0, (3.3)
+and the nonlinear part is simply equation (2.17) withK = 0.04, b = 10.
+Training
+The baseline agent was trained on a simulated process using the demonstra-
+tion implementation described in algorithm 1. The total loss functions used
+are restated here: for the actor
+Lµ =Lµ
+A +Lµ
+BC +Lµ
+R, (3.4)
+29
+
+--- PAGE 30 ---
+Chapter 3. Method
+with
+
+
+
+Lµ
+A =− 1
+N
+N∑
+i=1
+Q(si,µ (si|θµ)|θQ),
+Lµ
+BC = 1
+2ND
+ND∑
+j=1
+(
+ad
+j−µ(sd
+j|θµ)
+)2
+cj,
+Lµ
+R = 1
+4∥θµ∥2
+2,
+(3.5)
+and for the critic
+LQ =LQ
+MSE +LQ
+R, (3.6)
+with
+
+
+
+LQ
+MSE = 1
+N
+N∑
+i=1
+(
+ri +γQ′(si+1,µ′(si+1|θµ′
+)|θQ′
+)(1−ti)−Q(si,ai|θQ)
+)2
+,
+LQ
+R = 1
+2
+θQ2
+2.
+(3.7)
+The network structures of the actor and critic are given in Tables 3.3 and 3.4
+respectively. The network structures were chosen because they are similar to
+the DQN used in [Wilroth et al., 2020], which successfully performed swing-
+up of a Furuta pendulum. Training hyperparameters are given in Table 3.5.
+It should be noted that the exploration noise is the standard deviation of the
+Gaussian noise applied to the action, and the action is scaled to be limited
+to [−1.0, 1.0].
+Table 3.3: Network structure for the actor used for the Furuta pendulum.
+layer neurons activation function
+input 5 -
+1 24 ReLU
+2 48 ReLU
+3 72 ReLU
+4 96 ReLU
+5 128 ReLU
+6 1 tanh
+30
+
+--- PAGE 31 ---
+3.2 Furuta pendulum
+Table 3.4: Network structure for the critic used for the Furuta pendulum.
+layer neurons activation function
+input 6 -
+1 24 ReLU
+2 48 ReLU
+3 72 ReLU
+4 96 ReLU
+5 128 ReLU
+6 1 linear
+Table 3.5: Training hyperparameters for the Furuta agents.
+parameter value
+batch size 256
+γ 0.99
+τ 0.995
+exploration noise 0.1
+buﬀer size 100000
+expert buﬀer size 50000
+The baseline agent was trained in three steps. First it was pretrained using
+only expert demonstrations for 35000 steps. Secondly it was trained until
+it attained an average reward over ﬁve episodes of -3500 or greater. Each
+episode was terminated if|φ| exceeded 2π, the pendulum had|θ|≤ 0.05,
+| ˙θ|≤ 0.5, or after ﬁve seconds. This eﬀectively served to teach the agent
+to swing up and catch the pendulum. Finally it was trained the same way
+as in step two, except the episodes only terminated if|φ|≥ 2π or after ﬁve
+seconds. This trained the agent to swing up, catch and balance the pendulum.
+Dividing the ﬁnal two steps like this was found to be more eﬀective.
+The baseline agent was further trained using PGD according to algorithm
+3. For eachε∈{ 0.025, 0.05, 0.075, 0.1, 0.125, 0.15}, ﬁve agents were trained
+until their average reward over ﬁve episodes exceeded -10000. Agents that
+failed to swing-up or balance an unperturbed pendulum, or exceeded 400
+episodes, were discarded and retrained.
+31
+
+--- PAGE 32 ---
+Chapter 3. Method
+Testing and evaluation
+Theagentsweretestedusingthefollowingtest:anagentperformsoneepisode
+of swing-up and balancing on the environment. After half the episode, if the
+pendulum angle drops below π/2 in either direction, the test is failed. If
+not, the test is successful. During the episode, the states given to the agent
+are perturbed with Gaussian zero-mean noise with standard deviationsσ∈
+[0.0, 0.3]. This test is carried out 30 times for each agent at each noise level,
+with the number of successful tests recorded. Results are then collected for all
+agents of the same level of PGD-training, and the fraction of successful test
+of each training level is plotted againstσ. In addition, the Lipschitz constants
+of each actor network was estimated. The means and standard deviations of
+the constants of the ﬁve agents for each PGD-level were calculated.
+32
+
+--- PAGE 33 ---
+4
+Results
+In this section results from the experiments are presented. First the eﬀect
+of PGD training on the MNIST classiﬁer is shown, followed by correspond-
+ing results for the RL agents on the Furuta pendulum. Results consist of a
+comparison of the strength of PGD and Gaussian noise, the eﬀect of PGD
+training on robustness performance, as well as a comparison between robust-
+ness and Lipschitz constant.
+Certain numerical problems were encountered in this project, aﬀecting
+some of the results. For MNIST, running the PGD algorithm against the
+baselinemodelwith ε≥ 0.35orattemptingPGDtrainingwith ε≥ 0.16,Julia
+reported a NaN error. This occurred when running in a Jupyter notebook,
+but not in the Atom IDE.
+For the Furuta pendulum, running the PGD algorithm against the base-
+line agent withε≥ 0.34 resulted in the algorithm returning NaN states at
+some point, which interestingly caused the pendulum’s angle measurements
+tobesettoeither0orapproximately1.347.Inaddition,duringPGD-training
+of an agent withε≥ 0.125 a NaN would appear somewhere, causing every
+weight in the neural networks to be set to NaN, ruining this agent. This
+became more frequent with higherε, and training an agent withε≥ 0.175
+was impossible for this reason.
+4.1 MNIST
+Figure 4.1 shows the accuracy of the baseline classiﬁer on the test set per-
+turbed by PGD withε∈ [0.0, 0.2] and white noise withσ∈ [0.0, 0.1]. The
+accuracy atε = 0.2 was 0.0041, and the accuracy atσ = 0.1 was 0.97.
+33
+
+--- PAGE 34 ---
+Chapter 4. Results
+Figure 4.1: The accuracy of the baseline classiﬁer when perturbed by PGD
+(blue) and white noise (red).
+Figure 4.2 shows one sample of the MNIST data set together with the same
+sample perturbed by Gaussian zero-mean noise with standard deviationσ =
+0.1, and by PGD against the baseline classiﬁer withε = 0.2. The baseline
+model classiﬁed the unperturbed and the Gaussian noise samples as 5, and
+the PGD sample as 3.
+(a) Unperturbed
+ (b) White noise, σ = 0.1
+ (c) PGD, ε = 0.2
+Figure 4.2: A sample from the MNIST dataset, with diﬀerent perturbations.
+The baseline model classiﬁes (a) and (b) as 5, and (c) as 3.
+Figure 4.3 shows the accuracy of the baseline MNIST classiﬁer as well as
+34
+
+--- PAGE 35 ---
+4.1 MNIST
+the PGD-trained ones when tested on the test set perturbed by zero-mean
+Gaussian noise with varying standard deviations.
+Figure 4.3: The accuracy of the MNIST models on the test set perturbed by
+white noise.
+Table 4.1 shows the estimated Lipschitz constants for the MNIST classiﬁer
+networks, as well as a performance metric, which is simply the mean accuracy
+of each model in Figure 4.3.
+Table 4.1: Lipschitz constants of MNIST classiﬁers with diﬀerent levels of
+PGD training.
+PGD level Lipschitz constant performance
+baseline 279.88 0.5050
+0.01 233.10 0.6239
+0.05 81.09 0.6865
+0.10 138.91 0.7242
+0.15 223.34 0.7166
+35
+
+--- PAGE 36 ---
+Chapter 4. Results
+4.2 Furuta pendulum
+Figure 4.4 shows the success rate of the baseline Furuta agent when fed
+states perturbed by zero-mean Gaussian noise withσ∈ [0, 0.4] and PGD
+with ε∈ [0, 0.8]. The success rate is the average over 30 experiments. For
+all PGD data points marked with crosses, the PGD algorithm returned NaN
+at some point. As previously mentioned, this caused the pendulum angle
+measurements to be set to 0 or 1.347, which would pass the test. For this
+reason, crossed out points that show successful tests (1) should be considered
+false positives, and those showing failed tests (0) had already failed before
+the NaN appeared and should be considered true negatives.
+Figure 4.4: Success rate of the baseline Furuta agent when perturbed by PGD
+and white noise.
+Figure 4.5 shows the average success rates of the ﬁve PGD-trained agents
+at each PGD level when performing the robustness test, plotted against the
+noise level. Also shown are the success rates for the classical controller and
+the baseline agent. Figure 4.6 shows the success rates of the best performing
+PGD-trained agents at each level, as well as the classical controller and the
+baseline agent.
+36
+
+--- PAGE 37 ---
+4.2 Furuta pendulum
+Figure 4.5: Average success rates of the PGD-trained agents, along with the
+baseline agent and the classical controller.
+Figure 4.6: Success rates of the best performing PGD-trained agents, along
+with the baseline agent and the classical controller.
+37
+
+--- PAGE 38 ---
+Chapter 4. Results
+Figure 4.7 shows the average success rates of each agent plotted against their
+Lipschitz constants. The average success rate here means the average value
+of curves like the ones plotted in Figures 4.5 and 4.6. A table containing all
+values along with means and standard deviations per PGD level can be found
+in Appendix B.
+Figure 4.7: The relation between the Lipschitz constants and success rates of
+every PGD-trained Furuta agent.
+Appendix C contains plots from simulations of the Furuta pendulum, with
+various controllers and adversaries.
+38
+
+--- PAGE 39 ---
+5
+Discussion and Conclusion
+5.1 MNIST
+Figures 4.1 and 4.2 clearly demonstrate the potency of PGD as an adversary
+when applied to the MNIST dataset. The accuracy of the model on adver-
+sarial samples deteriorates very quickly when exposed to PGD, and barely at
+all the subject to similar levels of white noise, as seen in Figure 4.1. Figure
+4.2 shows a typical adversarial example: the PGD disturbed sample is clearly
+still a 5 to a human eye, but the model classiﬁes it as a 3. We also see that
+the PGD adversary pushes most of the pixels to their extreme permitted val-
+ues; most of the background pixels are grey, which corresponds to the PGD
+algorithm changing their values from 0 to 0.2, which is the upper limit given
+ε = 0.2. This makes sense, and indicates that the loss function has a max-
+imum where most pixels are perturbed by more than 0.2. The white noise
+example, as expected, has more randomly distributed perturbations. This
+tells us that whileε = 2σ guarantees that 95% of the random disturbances
+fall within the same interval as the PGD disturbances, the PGD adversary
+likely has a higher average disturbance, which means thatε = 2σ might not
+be an entirely fair comparison of disturbance levels. Constructing a more
+fair comparison would however be diﬃcult and ultimately not very useful,
+since the conclusions will be based on using PGD for robustness training
+and Gaussian noise for evaluation, which means there is no real need for a
+comparison between the two disturbance models.
+The PGD training does improve model robustness to white noise, as
+shown in Figure 4.3. The baseline model performed the worst, and models
+with higher PGD levels performed better, except forε = 0.15, which per-
+formed similarly (or slightly worse, as shown in Table 4.1) toε = 0.1. This
+indicates that there is an upper limit to the adversarial training, beyond
+which returns diminish or even deteriorate.
+What is interesting is the fact that higher model robustness does not
+seem to correlate with lower Lipschitz constants, as claimed in [Fazlyab et
+al., 2019]. Table 4.1 shows that while the baseline model does have the worst
+39
+
+--- PAGE 40 ---
+Chapter 5. Discussion and Conclusion
+performanceandthehighestLipschitzconstant,the0.05modelhasthelowest
+Lipschitz constant but not the best performance, and the 0.10 model has the
+best performance but a higher Lipschitz constant. Also, 0.10 and 0.15 show
+similar performances but greatly diﬀering constants. This indicates that this
+Lipschitz constant might not be an ideal representation of robustness for
+neural networks. One reason for this is that the input values are limited;
+for the MNIST dataset, all pixel values are between 0 and 1. On the other
+hand, the Lipschitz estimation considers any possible input values which
+can technically be fed to the network, but do not appear in any data even
+actually given to the network. A better metric might be given by a "local"
+estimation of the Lipschitz constant which considers a restricted input space.
+It is interesting to note that [Fazlyab et al., 2019] shows decreasing Lipschitz
+constants for the baseline model,ε = 0.01 and ε = 0.05 in a similar test,
+which is corroborated by our results. The trend does not continue however.
+5.2 Furuta pendulum
+Attempting to compare the strengths of PGD and Gaussian noise as ad-
+versaries in the same way as for MNIST resulted in Figure 4.4, which is
+not as simple to interpret. Firstly, the numerical issues with NaNs appear-
+ing made much of the PGD data unreliable. As previously discussed, this
+NaN phenomenon caused the pendulum angle to be set to either 0 or 1.347,
+which would evaluate as passing the test. This is why most of the crossed
+out points show passed tests. The ones that show failed tests simply mean
+that the agent failed the test before the NaN appeared. Secondly, the PGD
+results were binary, showing either 30 successful tests or 30 failed ones. This
+is explained by the fact that the PGD algorithm, the DDPG agent and the
+Furuta pendulum environment are all deterministic. Without artiﬁcially in-
+troducing randomness, this means that for a certain agent, a certainε and a
+certain initial pendulum angle, the result will always be identical.
+Usingε = 2σ as roughly equivalent noise levels, PGD impacts the success
+rate of the agent at a lower threshold than Gaussian noise, lending some
+credence to the idea that it is a potent adversary. Drawing any conclusions
+beyond this is diﬃcult however.
+The eﬀectiveness of the PGD training did not meet expectations. Figure
+4.5 shows that the average eﬀectiveness of the ﬁve agents at each PGD level
+was worse than the baseline agent at every level. This can be attributed to
+a number of things, but likely the chief culprit is the inherent instability of
+Reinforcement Learning. Even training the baseline agent, the agent’s per-
+formance would wildly peak and trough during training, often losing and
+regaining the ability to balance the pendulum multiple times. For this rea-
+son, choosing when to halt training was not trivial. The baseline agent was
+40
+
+--- PAGE 41 ---
+5.2 Furuta pendulum
+stopped when it reached an average reward over ﬁve episodes of -3500 or
+higher. Most agents during PGD training, at allε, would simply never reach
+this value. The PGD adversary works by fooling the agent into reducing its
+returned reward, so it is natural that this would cause agents to reach lower
+best rewards. Simply training the agents for a certain number of episodes
+was also not feasible, since most of the time this would halt the agent at a
+point where it could not perform balancing even for an unperturbed pendu-
+lum, so the agent would have to be discarded. Since training took around
+45 minutes per 100 episodes, this was simply too time ineﬃcient, and also
+did not guarantee better agents. Finding the best stopping criterion could be
+a subject of further research, and would likely heavily contribute towards a
+more eﬀective training process.
+Another factor that potentially contributes is the actual eﬀectiveness of
+the PGD algorithm as an adversary. As previously shown, evaluating the
+algorithm’s eﬀectiveness proved quite diﬃcult. It also depends heavily on the
+accuracy of the agent’s critic network, which itself changes during training.
+It is possible, though diﬃcult to demonstrate, that since the actor, critic and
+adversary all depend on each other during training, they derail and start
+behaving strangely. This further plays into the instability of RL training.
+Looking at Figure 4.6, we see that the best performing agents come close
+to the baseline agent, with one even outperforming it. It is diﬃcult to say
+whether this is due to the PGD training or simply luck given the instability
+of the training process. This result does however indicate that there may
+be some promise here, and further testing, hyperparameter tuning and the
+like may lead to better reproducible results. This could be an area of further
+research.
+Ignoring the diﬀerence between the PGD agents and the baseline, the
+PGD agents do not seem to improve with higherε. Aside fromε = 0.1 per-
+forming slightly better on average, and one agent atε = 0.075 signiﬁcantly
+outperforming every other agent, all PGD levels are very close with no ap-
+parent order. This further supports the notion that PGD training did not
+have a noticeable eﬀect on robustness. Again, however, we cannot discard
+the possibility that it could with further investigation and ﬁne-tuning.
+Figure 4.7 reveals no apparent correlation between lower Lipschitz con-
+stants and higher performance levels, contrary to expectation. There could
+possibly be a correlation between lower Lipschitz constants and worse per-
+formance, however that is neither very clear nor what we are interested in.
+This further reinforces the notion that the Lipschitz constant is not an ideal
+measure of neural network robustness, for the same reasons as previously dis-
+cussed. Since observations contain sine and cosine functions which are limited
+to [−1, 1], as well as angle velocities which have a practical upper bound, the
+input space is restricted, similar to the MNIST case. Again, a better measure
+might be one that only considers this limited input space. Designing such a
+41
+
+--- PAGE 42 ---
+Chapter 5. Discussion and Conclusion
+measure is an interesting topic for future research.
+5.3 Conclusions
+PGD training did positively inﬂuence the robustness of the MNIST classiﬁer,
+although neither PGD training nor robustness seem to correlate with the
+Lipschitz constants, contrary to the claims in [Fazlyab et al., 2019]. For the
+Furuta pendulum, there is no evidence that PGD training positively aﬀected
+the robustness or the Lipschitz constants of the RL controllers, although we
+cannot discard the possibility that it could, given a more ﬁnely tuned training
+process. There is also no evidence of a correlation between robustness and the
+Lipschitz constant. In summary, expectations are mostly met for the simple
+MNIST case, but more investigation is needed for the more complicated RL
+case.
+Possible future work includes designing a more local robustness measure,
+ﬁne-tuning the adversarial training process and exploring the impact of the
+agents’ network structures. One could also investigate other types of robust-
+ness, as this project only looked at robustness towards white measurement
+noise.
+42
+
+--- PAGE 43 ---
+Bibliography
+Daskalakis, C., A. Ilyas, V. Syrgkanis, and H. Zeng (2017). “Training gans
+with optimism”.CoRR abs/1711.00141.
+Fazlyab, M., A. Robey, H. Hassani, M. Morari, and G. J. Pappas (2019).
+“Eﬃcient and accurate estimation of lipschitz constants for deep neural
+networks”.CoRR abs/1906.04893.
+Furuta, K., M. Yamakita, S. Kobayashi, and M. Nishimura (1991). “A new
+inverted pendulum apparatus for education”. In: KHEIR, N. et al. (Eds.).
+Advances in Control Education 1991. Pergamon, Amsterdam, pp. 133–
+138.
+Gäfvert, M. (1998). Modelling the Furuta Pendulum. Tech. rep. Technical
+Reports TFRT-7574. Lund University, Department of Automatic Control.
+Goecks, V. G., G. M. Gremillion, V. J. Lawhern, J. Valasek, and N. R.
+Waytowich (2019). “Integrating behavior cloning and reinforcement learn-
+ing for improved performance in sparse reward environments”.CoRR
+abs/1910.04281.
+Goodfellow, I. J., J. Shlens, and C. Szegedy (2015). “Explaining and harness-
+ing adversarial examples”.
+Huang, S. H., N. Papernot, I. J. Goodfellow, Y. Duan, and P. Abbeel
+(2017). “Adversarial attacks on neural network policies”. CoRR
+abs/1702.02284.
+Katz, B. (2019).Furuta pendulum. Unpublished.
+Kingma, D. P. and J. Ba (2014). “Adam: a method for stochastic optimiza-
+tion”.CoRR abs/1412.6980.
+Krizhevsky, A. (2009).Learning Multiple Layers of Features from Tiny Im-
+ages. Tech. rep.
+LeCun, Y. and C. Cortes (2010). “MNIST handwritten digit database”.
+Lillicrap, T. P., J. J. Hunt, A. Pritzel, N. Heess, T. Erez, Y. Tassa, D. Silver,
+and D. Wierstra (2015). “Continuous control with deep reinforcement
+learning”.
+43
+
+--- PAGE 44 ---
+Bibliography
+Madry, A., A. Makelov, L. Schmidt, D. Tsipras, and A. Vladu (2019). “To-
+wards deep learning models resistant to adversarial attacks”.
+Mnih, V., K. Kavukcuoglu, D. Silver, A. Graves, I. Antonoglou, D. Wier-
+stra, and M. A. Riedmiller (2013). “Playing atari with deep reinforcement
+learning”.CoRR abs/1312.5602.
+MOSEK (2021).Mosek modeling cookbook. url: https://docs.mosek.com/
+MOSEKModelingCookbook-letter.pdf.
+Nair, A., B. McGrew, M. Andrychowicz, W. Zaremba, and P. Abbeel (2017).
+“Overcoming exploration in reinforcement learning with demonstrations”.
+CoRR abs/1709.10089.
+Oikarinen, T. P., T.-W. Weng, and L. Daniel (2020). “Robust deep reinforce-
+ment learning through adversarial loss”.CoRR abs/2008.01976.
+Pattanaik, A., Z. Tang, S. Liu, G. Bommannan, and G. Chowdhary (2017).
+“Robust deep reinforcement learning with adversarial attacks”.CoRR
+abs/1712.03632.
+Wilroth, J., J. Hansson, and L. Hassbring (2020).Regulating the furuta pen-
+dulum. Course project report at LTH.
+44
+
+--- PAGE 45 ---
+A
+MOSEK formulation of
+Lipschitz SDP
+The Julia implementation of MOSEK takes SDPs on the form
+min ⟨¯C1, Z1⟩ +... ⟨¯Cm, Zm⟩ + c⊤z
+s.t.
+
+
+⟨¯ a1, Z⟩
+...
+⟨¯ an, Z⟩
+
+ + Az = b,
+Z⪰ 0.
+(A.1)
+We will aim to rewrite (2.36) on this form. Withα = 0,β = 1 we get
+[
+A
+B
+]⊤[
+−2αβT (α +β)T
+(α +β)T −2T
+][
+A
+B
+]
+=
+[
+A
+B
+]⊤[
+0 T
+T −2T
+][
+A
+B
+]
+= B⊤TA+ A⊤TB− 2B⊤TB.
+(A.2)
+Assuming T = diag{λi}i=1,...n, we can decompose this matrix into
+B⊤TA+ A⊤TB− 2B⊤TB =
+n∑
+i=1
+Viλi, (A.3)
+where each Vi is determined by settingλi = 1 and λj = 0,i ̸= j in T.
+Additionally deﬁne
+V0 =
+
+
+−In0 0 ...
+0 0 ...
+... ... ...
+
+. (A.4)
+45
+
+--- PAGE 46 ---
+Appendix A. MOSEK formulation of Lipschitz SDP
+Now deﬁnex = [ρ,λ 1,...,λ n]⊤, and
+W =
+
+
+0 ... 0
+... ... ...
+0 ... (Wl)⊤Wl
+
+. (A.5)
+M(ρ, T) can now be written as
+M(ρ, T) = W +
+n∑
+0=1
+Vixi. (A.6)
+The constraintM(ρ, T)⪯ 0 ⇐⇒ −M(ρ, T)⪰ 0 can now be expressed as
+A0 +
+n+1∑
+i=1
+Aixi⪰ 0, (A.7)
+where A0 =−W, Ai =−Vi−1,i > 0. This lets us write the optimization
+problem as
+min c⊤x
+s.t. A0 +
+n+1∑
+i=1
+Aixi = X,
+X⪰ 0.
+(A.8)
+The dual to this problem is [MOSEK, 2021]
+max −⟨ A0, Z⟩
+s.t. ⟨Ai, Z⟩ =ci, i = 1,...,n + 1,
+Z⪰ 0,
+(A.9)
+which is on the desired form. The value ofρ, which is what is interesting,
+is simply given by the ﬁrst element of−⟨A0,Z⟩, since the primal and dual
+have the same objective value at optimality. Reformulating (A.9) with our
+original variable names gives
+max ⟨W, Z⟩
+s.t. −⟨ Vi−1, Z⟩ =ci, i = 1,...,n + 1,
+Z⪰ 0.
+(A.10)
+46
+
+--- PAGE 47 ---
+B
+Table of Furuta results
+This Figure contains the Lipschitz constants and average success rates of
+every PGD-trained Furuta agent. Means and standard deviations for each
+PGD level are also given. The best (lowest) Lipschitz constant and best
+(highest) performance at each level is highlighted.
+Table B.1: Lipschitz constants and performance scores for PGD-trained Fu-
+ruta agents.
+Lipschitz mean std performance mean std
+baseline 36.10 0.6527
+ε = 0.025
+1 52.10 0.5101
+2 50.01 0.6344
+3 30.46 46.91 12.86 0.5645 0.4619 0.1571
+4 38.34 0.2570
+5 63.66 0.3430
+ε = 0.050
+1 29.05 0.2882
+2 33.57 0.5570
+3 61.80 39.79 14.14 0.3688 0.4680 0.1371
+4 45.88 0.5032
+5 28.65 0.6226
+ε = 0.075
+1 46.60 0.3860
+2 43.16 0.7301
+3 63.78 54.59 9.15 0.1355 0.4385 0.2251
+4 45.88 0.3677
+47
+
+--- PAGE 48 ---
+Appendix B. Table of Furuta results
+5 28.65 0.5731
+ε = 0.100
+1 36.89 0.5849
+2 35.79 0.6430
+3 55.74 40.52 11.38 0.6140 0.5759 0.0566
+4 47.75 0.5075
+5 26.44 0.5301
+ε = 0.125
+1 52.37 0.5602
+2 38.95 0.5871
+3 49.87 43.24 7.32 0.2914 0.4824 0.1158
+4 38.67 0.4935
+5 36.33 0.4796
+ε = 0.150
+1 42.83 0.5882
+2 21.84 0.5806
+3 71.04 43.98 19.89 0.1215 0.4430 0.1927
+4 55.36 0.4580
+5 28.83 0.4785
+48
+
+--- PAGE 49 ---
+C
+Furuta pendulum plots
+The following ﬁgures show sample simulations of the Furuta pendulum con-
+trolled by the classical controller, baseline agent,ε = 0.075 agent 2 (the best
+performing agent) andε = 0.15 agent 3 (the worst performing agent), with
+various adversaries.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.1: The classical controller with unperturbed states.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.2: The baseline agent with unperturbed states.
+49
+
+--- PAGE 50 ---
+Appendix C. Furuta pendulum plots
+(a) Pendulum angle
+ (b) Control signal
+Figure C.3: Theε = 0.075 agent 2 with unperturbed states.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.4: Theε = 0.15 agent 3 with unperturbed states.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.5: The classical controller with states perturbed by Gaussian noise,
+σ = 0.2.
+50
+
+--- PAGE 51 ---
+Appendix C. Furuta pendulum plots
+(a) Pendulum angle
+ (b) Control signal
+Figure C.6: The baseline agent with states perturbed by Gaussian noise,
+σ = 0.2.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.7: Theε = 0.075 agent 2 with states perturbed by Gaussian noise,
+σ = 0.2.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.8: Theε = 0.15 agent 3 with states perturbed by Gaussian noise,
+σ = 0.2.
+51
+
+--- PAGE 52 ---
+Appendix C. Furuta pendulum plots
+(a) Pendulum angle
+ (b) Control signal
+Figure C.9: The baseline agent with states perturbed by PGD,ε = 0.2.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.10: Theε = 0.075 agent 2 with states perturbed by PGD,ε = 0.2.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.11: Theε = 0.15 agent 3 with states perturbed by PGD,ε = 0.2.
+52
+
+--- PAGE 53 ---
+Appendix C. Furuta pendulum plots
+(a) Pendulum angle
+ (b) Control signal
+Figure C.12: The baseline agent with states perturbed by PGD,ε = 0.36.
+After approx. 1.7 seconds a NaN appears.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.13: Theε = 0.075 agent 2 with states perturbed by PGD,ε = 0.36.
+(a) Pendulum angle
+ (b) Control signal
+Figure C.14: Theε = 0.15 agent 3 with states perturbed by PGD,ε = 0.36.
+53
+
+--- PAGE 54 ---
+
+
+--- PAGE 55 ---
+
+/XQG8QLYHUVLW\
+'HSDUWPHQWRI$XWRPDWLF&RQWURO
+%R[
+6(/XQG6ZHGHQ
+Document name 
+0$67(5¶67+(6,6
+Date of issue 
+2FWREHU
+Document Number 
+7)57
+Author(s) 
+3KLOLS2OKDJHU
+Supervisor 
+-RKDQ*U|QTYLVW'HSWRI$XWRPDWLF&RQWURO/XQG
+8QLYHUVLW\6ZHGHQ
+5LFKDUG3DWHV'HSWRI$XWRPDWLF&RQWURO/XQG
+8QLYHUVLW\6ZHGHQ
+$QGHUV5DQW]HU'HSWRI$XWRPDWLF&RQWURO/XQG
+8QLYHUVLW\6ZHGHQH[DPLQHU
+
+Title and subtitle 
+5REXVW5HLQIRUFHPHQW/HDUQLQJ&RQWURORID)XUXWD3HQGXOXP
+Abstract 
+
+7KHXVHRI5HLQIRUFHPHQW/HDUQLQJ5/WRGHVLJQFRQWUROOHUVIRUVDIHW\FULWLFDOV\VWHPVLVDQ
+LPSRUWDQWUHVHDUFKDUHD2QWKHRQHKDQG5/FDQIXQFWLRQLQDQGDGDSWWRFRPSOH[DQGFKDQJLQJ
+HQYLURQPHQWVZLWKRXWUHTXLULQJDPRGHORIWKHV\VWHP2QWKHRWKHUKDQGLQVXFKV\VWHPVUREXVWQHVV
+LVRIKLJKLPSRUWDQFHDVZHOODVZD\VWRJXDUDQWHHDQGFHUWLI\DOHYHORIUREXVWQHVV7KLVSURMHFW
+LQYHVWLJDWHVVWDWHRIWKHDUWPHWKRGVIRUWUDLQLQJIRUDQGHYDOXDWLQJUREXVWQHVVLQDQHXUDOQHWZRUN
+ZKHQDSSOLHGWR5/FRQWURORIDUHDOZRUOGV\VWHP7KHXVHRI3URMHFWHG*UDGLHQW'HVFHQW3*'DV
+DQDGYHUVDU\IRUUREXVW'HHS5/DVZHOODVWKH/LSVFKLW]FRQVWDQWDVDPHDVXUHRIDQHXUDOQHWZRUN
+FRQWUROOHU¶VUREXVWQHVVDUHHYDOXDWHG
+7KHVWXG\LVFRQGXFWHGE\WUDLQLQJDQDJHQWWRSHUIRUPVZLQJXSDQGEDODQFLQJRID)XUXWD
+SHQGXOXPDQGIXUWKHUWUDLQLQJLWZLWK3*'RIYDU\LQJPDJQLWXGHVDVDQDGYHUVDU\7KHDJHQWVDUH
+HYDOXDWHGE\WKHLUUREXVWQHVVWRZDUGVQRUPDOO\GLVWULEXWHGPHDVXUHPHQWQRLVHDVZHOODVWKHLU
+HVWLPDWHG/LSVFKLW]FRQVWDQW
+7KHUHVXOWVVKRZWKDWZKLOHWUDLQLQJZLWK3*'GRHVUHVXOWLQEHWWHUUREXVWQHVVIRUDFODVVLILHURQWKH
+01,67GDWDVHWDSSO\LQJWKHWHFKQLTXHWRWKH)XUXWDSHQGXOXPLQD'HHS5HLQIRUFHPHQW/HDUQLQJ
+VHWWLQJLVQRWVRVLPSOH2QHRIDJHQWVPDQDJHGWRRXWSHUIRUPWKHEDVHOLQHDJHQWLQGLFDWLQJWKDW
+ZKLOHWKHWHFKQLTXHPD\KDYHVRPHSURPLVHIXUWKHUILQHWXQLQJRIWKHWUDLQLQJSURFHVVLVQHFHVVDU\
+)XUWKHUWKH/LSVFKLW]FRQVWDQWGLGQRWFRUUHODWHZLWKUREXVWQHVVSHUIRUPDQFHLQGLFDWLQJWKDWLWPD\
+QRWEHDQLGHDOPHDVXUHRIDQHXUDOQHWZRUN¶VUREXVWQHVV
+Keywords 
+
+Classification system and/or index terms (if any) 
+
+Supplementary bibliographical information 
+
+ISSN and key title 
+
+ISBN 
+
+Language 
+(QJOLVK
+Number of pages 
+
+Recipient’s notes 
+Security classification 
+KWWSZZZFRQWUROOWKVHSXEOLFDWLRQV

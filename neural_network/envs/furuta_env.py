@@ -10,16 +10,20 @@ Two training modes
 
 Observation
 -----------
-  balance (4 floats, all in [-1, 1]):
-    [0]  arm angle   θ₁, wrapped to [-π,π], normalised by π
-    [1]  pendulum error  (θ₂ − π) wrapped to [-π,π], normalised by π
+  balance (5 floats, all in [-1, 1]):
+    [0]  sin(θ₁)     arm angle sine component    — naturally in [-1, 1]
+    [1]  cos(θ₁)     arm angle cosine component  — naturally in [-1, 1]
+    [2]  pendulum error  (θ₂ − π) wrapped to [-π,π], normalised by π
            → 0 when upright, ±1 when hanging straight down
-    [2]  arm angular velocity  ω₁, clipped & normalised by OMEGA1_MAX
-    [3]  pendulum angular velocity  ω₂, clipped & normalised by OMEGA2_MAX
+    [3]  arm angular velocity  ω₁, clipped & normalised by OMEGA1_MAX
+    [4]  pendulum angular velocity  ω₂, clipped & normalised by OMEGA2_MAX
 
-  swingup (5 floats, all in [-1, 1]):
-    [0–3]  same as balance
-    [4]  normalised energy error  E_err / E_MAX
+  Using (sin, cos) rather than θ₁/π avoids the discontinuity at the ±π
+  wrap boundary.  The representation is periodic and smooth everywhere.
+
+  swingup (6 floats, all in [-1, 1]):
+    [0–4]  same as balance
+    [5]  normalised energy error  E_err / E_MAX
            E_err = E_pendulum − E_upright
            0 when the pendulum has exactly the energy to reach vertical.
            Negative when under-energised (needs more pumping).
@@ -35,9 +39,9 @@ Action (1 float, [-1, 1])
 
 Reward
 ------
-  balance:  r = cos(θ_err) − coeff · clip(ω₁ / OMEGA1_MAX, ±1)² · max(0, cos(θ_err))
-
-              Factored form: r = cos(θ_err) · (1 − coeff · w1_norm²) when upright.
+  balance:  r = cos(θ_err)
+              − arm_coeff · w1_norm² · max(0, cos(θ_err))
+              − effort_coeff · u²
 
               The arm penalty is gated by max(0, cos(θ_err)) so it is only active
               when the pendulum is near upright.  When the pendulum is falling
@@ -54,7 +58,12 @@ Reward
                    disrupts balance.  The gate removes the penalty during
                    corrections, so the agent can apply full torques to recover.
 
-              coeff is set via env._arm_penalty_coeff (default 0.5).
+              arm_coeff    — set via env._arm_penalty_coeff (default 2.0)
+              effort_coeff — set via env._effort_penalty_coeff (default 0.001)
+                             u is the normalised torque command in [−1, 1].
+                             At full torque the cost is 0.001/step — small enough
+                             not to inhibit corrections, large enough to eliminate
+                             gratuitous high-frequency torque chattering on hardware.
 
   swingup:  r = cos(θ₂ − π)
               +1 when upright, −1 when hanging.
@@ -175,8 +184,9 @@ class FurutaEnv(gym.Env):
         # ------------------------------------------------------------------ #
         # Gymnasium spaces                                                     #
         # ------------------------------------------------------------------ #
-        # Swing-up gets one extra input: normalised energy error E_err.
-        obs_size = 5 if mode == "swingup" else 4
+        # Arm angle is encoded as (sin, cos) — 2 inputs — plus pendulum error,
+        # arm velocity, pendulum velocity, and (swingup only) energy error.
+        obs_size = 6 if mode == "swingup" else 5
         self.observation_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -193,6 +203,7 @@ class FurutaEnv(gym.Env):
         # Internal state
         self._state: np.ndarray = np.zeros(4)
         self._step_count: int = 0
+        self._last_u: float = 0.0  # last normalised torque command, for effort penalty
 
         # Renderer (lazy initialised)
         self._fig = None
@@ -230,7 +241,14 @@ class FurutaEnv(gym.Env):
             # Arm velocity is sampled independently of pendulum difficulty.
             # The arm can arrive spinning fast even when the pendulum starts near
             # upright — e.g. a swing-up handoff or a prior failed balance attempt.
-            max_w1 = self.OMEGA1_MAX   # arm: full range ±4π rad/s ≈ ±720°/s
+            #
+            # Cap at OMEGA1_MAX/2 (360 deg/s ≈ 1 rev/s). The cap is not arbitrary:
+            # with arm_penalty coeff=2.0, any arm speed above OMEGA1_MAX/sqrt(2) ≈ 509
+            # deg/s gives NEGATIVE reward even at perfect pendulum balance, so the agent
+            # can never discover what "good" looks like from those starts. Capping at
+            # OMEGA1_MAX/2 = 360 deg/s gives a reward floor of +0.5 at max initial
+            # spin, while still covering realistic handoff arm speeds.
+            max_w1 = self.OMEGA1_MAX / 2.0   # 360 deg/s — reward floor +0.5 at max spin
             w1 = self._rng.uniform(-max_w1, max_w1)
 
             # Pendulum velocity: directed toward upright with enough energy to
@@ -271,7 +289,9 @@ class FurutaEnv(gym.Env):
         self, action: np.ndarray
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         # Clip and scale torque
-        torque = float(np.clip(action[0], -1.0, 1.0)) * self._params.tau_max
+        u = float(np.clip(action[0], -1.0, 1.0))
+        torque = u * self._params.tau_max
+        self._last_u = u  # stored for _reward()
 
         # Advance physics for control_steps substeps at dt each
         for _ in range(self.control_steps):
@@ -296,15 +316,20 @@ class FurutaEnv(gym.Env):
     def _obs(self) -> np.ndarray:
         """Return the normalised observation vector.
 
-        balance: 4 floats  [θ₁_norm, θ₂_err_norm, ω₁_norm, ω₂_norm]
-        swingup: 5 floats  [θ₁_norm, θ₂_err_norm, ω₁_norm, ω₂_norm, E_err_norm]
+        balance: 5 floats  [sin(θ₁), cos(θ₁), θ₂_err_norm, ω₁_norm, ω₂_norm]
+        swingup: 6 floats  [sin(θ₁), cos(θ₁), θ₂_err_norm, ω₁_norm, ω₂_norm, E_err_norm]
+
+        Arm angle is encoded as (sin, cos) rather than θ₁/π to avoid the
+        discontinuity at the ±π wrap boundary.  The pair is naturally in
+        [-1, 1] and is periodic and smooth everywhere.
         """
         th1, th2, w1, w2 = self._state
 
         theta2_err = _angle_normalize(th2 - np.pi)  # 0 when upright
 
         obs = [
-            _angle_normalize(th1) / np.pi,
+            float(np.sin(th1)),
+            float(np.cos(th1)),
             theta2_err / np.pi,
             np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0),
             np.clip(w2 / self.OMEGA2_MAX, -1.0, 1.0),
@@ -327,24 +352,24 @@ class FurutaEnv(gym.Env):
             # Gated arm penalty: only active when the pendulum is near upright.
             # max(0, cos(θ_err)) is 1 at perfect balance and 0 at 90°/hanging,
             # so the arm can move freely during recovery and must stop once balanced.
-            # This prevents both the spinning-cheat (spinning helps balance) and
-            # the stutter failure (brief torque bursts to avoid a uniform penalty).
-            #
-            # coeff=2.0: at 200°/s steady spin the episode costs ~309 units —
-            # well above the training noise floor (~150 std), making the gradient
-            # signal clearly visible.  coeff=0.5 only cost ~77 units, buried in noise.
             coeff = getattr(self, "_arm_penalty_coeff", 2.0)
             upright = float(np.cos(theta2_err))            # +1 upright, -1 hanging
             gate    = max(0.0, upright)                     # 0 when falling/horizontal
             w1_norm = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
             if getattr(self, "_arm_penalty_linear", False):
-                penalty = coeff * abs(w1_norm) * gate
+                arm_penalty = coeff * abs(w1_norm) * gate
             else:
-                penalty = coeff * w1_norm ** 2 * gate
-            return upright - penalty
+                arm_penalty = coeff * w1_norm ** 2 * gate
+
+            # Control effort penalty: discourages high-frequency torque chattering.
+            # u is in [-1, 1]; at full torque the cost is effort_coeff/step —
+            # small relative to the cosine reward but enough to smooth real hardware.
+            effort_coeff  = getattr(self, "_effort_penalty_coeff", 0.001)
+            effort_penalty = effort_coeff * self._last_u ** 2
+
+            return upright - arm_penalty - effort_penalty
         else:
-            # No arm-velocity penalty during swing-up — the agent must spin
-            # freely to pump energy into the pendulum.
+            # No penalties during swing-up — the agent must spin freely.
             return float(np.cos(theta2_err))
 
     # ------------------------------------------------------------------ #

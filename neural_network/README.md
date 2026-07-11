@@ -138,16 +138,22 @@ the curriculum is well-defined. Once balance works, train swing-up.
 Both networks receive the same base observation:
 
 ```
-[0]  θ₁ / π            arm angle, normalised to [-1, 1]
-[1]  (θ₂ − π) / π      pendulum error: 0 = upright, ±1 = hanging
-[2]  ω₁ / ω₁_max       arm angular velocity, clipped to [-1, 1]
-[3]  ω₂ / ω₂_max       pendulum angular velocity, clipped to [-1, 1]
+[0]  sin(θ₁)            arm angle sine   — periodic, no ±π discontinuity
+[1]  cos(θ₁)            arm angle cosine — periodic, no ±π discontinuity
+[2]  (θ₂ − π) / π      pendulum error: 0 = upright, ±1 = hanging
+[3]  ω₁ / ω₁_max       arm angular velocity, clipped to [-1, 1]
+[4]  ω₂ / ω₂_max       pendulum angular velocity, clipped to [-1, 1]
 ```
+
+The arm angle uses a (sin, cos) pair instead of a single normalised angle.
+A raw `θ/π` representation has a discontinuity at the ±π wrap boundary —
+the network sees a sudden jump from +1 to -1 for what is physically the
+same continuous rotation.  (sin, cos) is smooth and periodic everywhere.
 
 The swing-up network gets one extra input:
 
 ```
-[4]  E_err / E_max      energy error: 0 = exactly enough to reach vertical
+[5]  E_err / E_max      energy error: 0 = exactly enough to reach vertical
                         negative = needs more energy, positive = over-energised
 ```
 
@@ -160,7 +166,7 @@ Both networks: MLP, 2 hidden layers × 64 neurons, tanh activation.
 
 | | Balance | Swing-up |
 |-|---------|---------|
-| Inputs | 4 | 5 |
+| Inputs | 5 | 6 |
 | Hidden layers | 2 × 64, tanh | 2 × 64, tanh |
 | Output | 1 (normalised torque) | 1 (normalised torque) |
 
@@ -170,16 +176,18 @@ Small networks are intentional — they must run at 500 Hz on the SAMD51 M4F MCU
 
 **Balance:**
 ```
-r = -(θ_err² + 0.01·ω_arm²)     range: (-π², 0]
+r = cos(θ_err) − arm_coeff·w1_norm²·max(0,cos(θ_err)) − effort_coeff·u²
 ```
-Quadratic penalty on deviation from vertical and arm spinning. Maximum 0 (perfect balance).
+`cos(θ_err)` gives +1 at perfect balance, −1 hanging. The arm penalty is gated
+so the agent can swing freely during recovery. The effort penalty (`effort_coeff=0.001`)
+discourages high-frequency torque chattering on real hardware — at full torque the cost
+is 0.001/step, which is small enough not to inhibit corrections.
 
 **Swing-up:**
 ```
 r = cos(θ₂ − π)                  range: [-1, +1]
 ```
-+1 when upright, −1 when hanging. No arm velocity penalty — the agent must spin freely
-to pump energy into the pendulum.
++1 when upright, −1 when hanging. No penalties — the agent must spin freely.
 
 ### Curriculum learning (balance only)
 
