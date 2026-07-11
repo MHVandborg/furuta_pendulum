@@ -140,6 +140,7 @@ def train(
     learning_rate: float = 3e-4,
     ent_coef: float = 0.01,
     arm_penalty_coeff: float = 0.175,
+    load_model: str | None = None,
 ) -> PPO:
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
@@ -151,7 +152,7 @@ def train(
     eval_env  = make_vec_env(make_env(mode, arm_penalty_coeff), n_envs=1)
 
     # ------------------------------------------------------------------ #
-    # PPO hyperparameters                                                  #
+    # PPO model — fresh or loaded from checkpoint                         #
     # ------------------------------------------------------------------ #
     # Policy: two hidden layers of 64 neurons with tanh activation.
     # This matches what CMSIS-NN will run on the MCU (Phase 5).
@@ -160,23 +161,38 @@ def train(
         activation_fn=__import__("torch").nn.Tanh,
     )
 
-    model = PPO(
-        policy="MlpPolicy",
-        env=train_env,
-        learning_rate=learning_rate,
-        n_steps=2048,           # steps per env per update
-        batch_size=256,         # larger batch → more stable gradient estimates
-        n_epochs=10,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=ent_coef,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        policy_kwargs=policy_kwargs,
-        tensorboard_log="logs",
-        verbose=0,
-    )
+    if load_model is not None:
+        # Continue training from a saved checkpoint.  The loaded model keeps
+        # its weights and value function; only the environment (and therefore
+        # the reward) changes.  learning_rate and ent_coef are updated so the
+        # CLI args take effect even when resuming.
+        print(f"Loading model from {load_model} …")
+        model = PPO.load(
+            load_model,
+            env=train_env,
+            tensorboard_log="logs",
+            verbose=0,
+        )
+        model.learning_rate = learning_rate
+        model.ent_coef = ent_coef
+    else:
+        model = PPO(
+            policy="MlpPolicy",
+            env=train_env,
+            learning_rate=learning_rate,
+            n_steps=2048,           # steps per env per update
+            batch_size=256,         # larger batch → more stable gradient estimates
+            n_epochs=10,
+            gamma=0.99,
+            gae_lambda=0.95,
+            clip_range=0.2,
+            ent_coef=ent_coef,
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            policy_kwargs=policy_kwargs,
+            tensorboard_log="logs",
+            verbose=0,
+        )
 
     # ------------------------------------------------------------------ #
     # Callbacks                                                            #
@@ -275,6 +291,13 @@ def parse_args():
         default=0.175,
         help="Arm angular velocity penalty coefficient (default: 0.175)",
     )
+    p.add_argument(
+        "--load-model",
+        type=str,
+        default=None,
+        help="Path to a saved model zip to continue training from "
+             "(e.g. models/balance_best/best_model.zip)",
+    )
     return p.parse_args()
 
 
@@ -286,6 +309,7 @@ if __name__ == "__main__":
     print(f"  learning_rate  : {args.learning_rate}")
     print(f"  ent_coef       : {args.ent_coef}")
     print(f"  arm_penalty    : {args.arm_penalty}")
+    print(f"  load_model     : {args.load_model or '(none — fresh run)'}")
     print(f"  save           : {not args.no_save}\n")
     train(
         mode=args.mode,
@@ -295,4 +319,5 @@ if __name__ == "__main__":
         learning_rate=args.learning_rate,
         ent_coef=args.ent_coef,
         arm_penalty_coeff=args.arm_penalty,
+        load_model=args.load_model,
     )
