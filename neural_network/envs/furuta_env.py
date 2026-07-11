@@ -35,11 +35,11 @@ Action (1 float, [-1, 1])
 
 Reward
 ------
-  balance:  r = cos(θ_err) − 0.01·ω₁²
+  balance:  r = cos(θ_err) − coeff · clip(ω₁ / OMEGA1_MAX, ±1)²
               +1 when perfectly upright and still.
               Smooth gradient everywhere — cos gives useful signal even at 90°+.
-              The 0.01 factor keeps the arm-velocity penalty small relative to
-              the angle reward until ω₁ exceeds ~10 rad/s (≈1.6 rev/s).
+              OMEGA1_MAX normalises both the observation and the penalty so the
+              agent sees a consistent signal. coeff is set via env._arm_penalty_coeff.
 
   swingup:  r = cos(θ₂ − π)
               +1 when upright, −1 when hanging.
@@ -128,8 +128,8 @@ class FurutaEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
 
-    # Velocity normalisation limits
-    OMEGA1_MAX: float = 4.0 * np.pi   # arm:      ≈ 2 rev/s
+    # Velocity normalisation limits (for observations)
+    OMEGA1_MAX: float = 4.0 * np.pi   # arm:      ≈ 2 rev/s — clips observation only
     OMEGA2_MAX: float = 10.0 * np.pi  # pendulum: ≈ 5 rev/s
 
     def __init__(
@@ -294,17 +294,20 @@ class FurutaEnv(gym.Env):
         if self.mode == "balance":
             # Cosine reward: +1 upright, 0 at 90°, -1 hanging.
             # Smooth gradient everywhere — works from any starting angle.
-            # Arm-velocity penalty uses the same normalised & clipped velocity
-            # as the observation so the agent can always correlate what it sees
-            # with what it gets penalised for.
-            # The coefficient is set via env._arm_penalty_coeff so that both
-            # train.py and tune.py can control it without modifying this file.
+            #
+            # Arm-velocity penalty uses ARM_OMEGA_PENALTY_SCALE, not OMEGA1_MAX.
+            # OMEGA1_MAX clips the observation so the network input stays in
+            # [-1, 1].  ARM_OMEGA_PENALTY_SCALE is the speed at which the
+            # penalty saturates — set to 2 rad/s so even a slow steady spin
+            # (≈0.3 rev/s) costs a meaningful fraction of the balance reward.
+            # Using OMEGA1_MAX (4π) here would let the agent spin at 3 rad/s
+            # for a penalty of only ~0.007/step — essentially free.
             coeff = getattr(self, "_arm_penalty_coeff", 0.175)
-            w1_norm = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
+            w1_pen = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
             if getattr(self, "_arm_penalty_linear", False):
-                penalty = coeff * abs(w1_norm)
+                penalty = coeff * abs(w1_pen)
             else:
-                penalty = coeff * w1_norm ** 2
+                penalty = coeff * w1_pen ** 2
             return float(np.cos(theta2_err)) - penalty
         else:
             # No arm-velocity penalty during swing-up — the agent must spin
