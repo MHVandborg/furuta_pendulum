@@ -243,7 +243,83 @@ def train(
 
     train_env.close()
     eval_env.close()
+
+    if save:
+        _print_training_summary(mode, timesteps)
+
     return model
+
+
+def _print_training_summary(mode: str, total_timesteps: int) -> None:
+    """Read the EvalCallback log and print a concise end-of-run summary.
+
+    Indicators that training has NOT fully converged:
+      - Best reward still rising at the end of the run (increase --timesteps)
+      - Large gap between best and final reward (late instability / collapse)
+      - High std at the end (policy is inconsistent across episodes)
+      - Plateau reward well below 1800 (reward shaping problem, not a time problem)
+    """
+    eval_log = f"logs/{mode}_eval/evaluations.npz"
+    if not os.path.exists(eval_log):
+        return
+
+    data        = np.load(eval_log)
+    timesteps   = data["timesteps"]           # shape (N,)
+    results     = data["results"]             # shape (N, n_eval_episodes)
+    ep_lengths  = data["ep_lengths"]          # shape (N, n_eval_episodes)
+
+    mean_rewards = results.mean(axis=1)
+    std_rewards  = results.std(axis=1)
+    best_idx     = int(np.argmax(mean_rewards))
+    best_reward  = mean_rewards[best_idx]
+    best_step    = int(timesteps[best_idx])
+
+    # "Final" = mean over last 3 eval points (smoothed, not just the last one)
+    tail         = min(3, len(mean_rewards))
+    final_reward = mean_rewards[-tail:].mean()
+    final_std    = std_rewards[-tail:].mean()
+    final_step   = int(timesteps[-1])
+
+    # Trend: slope of mean reward over last 20% of training
+    window = max(int(len(mean_rewards) * 0.2), 2)
+    slope  = float(np.polyfit(timesteps[-window:], mean_rewards[-window:], 1)[0])
+    slope_per_100k = slope * 100_000
+
+    # Convergence verdict
+    still_rising  = slope_per_100k >  5.0   # reward improving meaningfully
+    collapsed     = (best_reward - final_reward) > 100
+    low_plateau   = best_reward < 1200
+    inconsistent  = final_std > 200
+
+    print("\n" + "=" * 60)
+    print(f"  TRAINING SUMMARY -- {mode}  ({total_timesteps:,} steps)")
+    print("=" * 60)
+    print(f"  Best eval reward  : {best_reward:7.1f}  (at {best_step:,} steps)")
+    print(f"  Final reward      : {final_reward:7.1f}  +/- {final_std:.1f}  (last {tail} evals)")
+    print(f"  Trend (per 100k)  : {slope_per_100k:+.1f}  (last 20% of run)")
+    print(f"  Max possible      :  2000.0  (2000 steps x +1.0/step)")
+    print("-" * 60)
+
+    issues = []
+    if still_rising:
+        issues.append("Still improving at end -- consider running longer (--timesteps)")
+    if collapsed:
+        issues.append(f"Late collapse: best {best_reward:.0f} -> final {final_reward:.0f} "
+                      f"(try lower --ent-coef or smaller --arm-penalty)")
+    if low_plateau:
+        issues.append("Plateau well below 1200 -- likely a reward shaping issue, "
+                      "not a time issue (check reward function)")
+    if inconsistent:
+        issues.append(f"High variance at end (std={final_std:.0f}) -- policy is unstable "
+                      f"(try lower --learning-rate)")
+
+    if issues:
+        print("  WARNINGS:")
+        for w in issues:
+            print(f"    * {w}")
+    else:
+        print("  Converged -- no issues detected.")
+    print("=" * 60 + "\n")
 
 
 # --------------------------------------------------------------------------- #
@@ -317,7 +393,7 @@ if __name__ == "__main__":
     print(f"  learning_rate  : {args.learning_rate}")
     print(f"  ent_coef       : {args.ent_coef}")
     print(f"  arm_penalty    : {args.arm_penalty} ({'linear' if args.linear_penalty else 'quadratic'})")
-    print(f"  load_model     : {args.load_model or '(none — fresh run)'}")
+    print(f"  load_model     : {args.load_model or '(none - fresh run)'}")
     print(f"  save           : {not args.no_save}\n")
     train(
         mode=args.mode,
