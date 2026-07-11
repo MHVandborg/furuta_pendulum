@@ -119,7 +119,7 @@ class CurriculumCallback(BaseCallback):
 # Training                                                                     #
 # --------------------------------------------------------------------------- #
 
-def make_env(mode: str, arm_penalty_coeff: float = 0.175):
+def make_env(mode: str, arm_penalty_coeff: float = 0.175, linear_penalty: bool = False):
     """Factory returning a thunk for make_vec_env."""
     def _init():
         # Balance starts within ±45° of upright — the range it will actually
@@ -128,6 +128,7 @@ def make_env(mode: str, arm_penalty_coeff: float = 0.175):
         difficulty = 0.23 if mode == "balance" else 1.0  # 0.23 → max_angle=±45°
         env = FurutaEnv(mode=mode, domain_randomisation=True, difficulty=difficulty)
         env._arm_penalty_coeff = arm_penalty_coeff
+        env._arm_penalty_linear = linear_penalty
         return env
     return _init
 
@@ -140,6 +141,7 @@ def train(
     learning_rate: float = 3e-4,
     ent_coef: float = 0.01,
     arm_penalty_coeff: float = 0.175,
+    linear_penalty: bool = False,
     load_model: str | None = None,
 ) -> PPO:
     os.makedirs("models", exist_ok=True)
@@ -148,8 +150,8 @@ def train(
     # ------------------------------------------------------------------ #
     # Environments                                                         #
     # ------------------------------------------------------------------ #
-    train_env = make_vec_env(make_env(mode, arm_penalty_coeff), n_envs=n_envs)
-    eval_env  = make_vec_env(make_env(mode, arm_penalty_coeff), n_envs=1)
+    train_env = make_vec_env(make_env(mode, arm_penalty_coeff, linear_penalty), n_envs=n_envs)
+    eval_env  = make_vec_env(make_env(mode, arm_penalty_coeff, linear_penalty), n_envs=1)
 
     # ------------------------------------------------------------------ #
     # PPO model — fresh or loaded from checkpoint                         #
@@ -292,6 +294,12 @@ def parse_args():
         help="Arm angular velocity penalty coefficient (default: 0.175)",
     )
     p.add_argument(
+        "--linear-penalty",
+        action="store_true",
+        help="Use linear |w1| arm penalty instead of quadratic w1^2 "
+             "(recommended for phase 2 fine-tuning from a trained model)",
+    )
+    p.add_argument(
         "--load-model",
         type=str,
         default=None,
@@ -308,7 +316,7 @@ if __name__ == "__main__":
     print(f"  n_envs         : {args.n_envs}")
     print(f"  learning_rate  : {args.learning_rate}")
     print(f"  ent_coef       : {args.ent_coef}")
-    print(f"  arm_penalty    : {args.arm_penalty}")
+    print(f"  arm_penalty    : {args.arm_penalty} ({'linear' if args.linear_penalty else 'quadratic'})")
     print(f"  load_model     : {args.load_model or '(none — fresh run)'}")
     print(f"  save           : {not args.no_save}\n")
     train(
@@ -319,5 +327,6 @@ if __name__ == "__main__":
         learning_rate=args.learning_rate,
         ent_coef=args.ent_coef,
         arm_penalty_coeff=args.arm_penalty,
+        linear_penalty=args.linear_penalty,
         load_model=args.load_model,
     )

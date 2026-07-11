@@ -301,10 +301,14 @@ class FurutaEnv(gym.Env):
             # train.py and tune.py can control it without modifying this file.
             coeff = getattr(self, "_arm_penalty_coeff", 0.175)
             w1_norm = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
-            return float(np.cos(theta2_err)) - coeff * w1_norm ** 2
+            if getattr(self, "_arm_penalty_linear", False):
+                penalty = coeff * abs(w1_norm)
+            else:
+                penalty = coeff * w1_norm ** 2
+            return float(np.cos(theta2_err)) - penalty
         else:
-            # Cosine reward: +1 when upright, -1 when hanging.
-            # No arm-velocity penalty — the agent must spin freely to pump energy.
+            # No arm-velocity penalty during swing-up — the agent must spin
+            # freely to pump energy into the pendulum.
             return float(np.cos(theta2_err))
 
     # ------------------------------------------------------------------ #
