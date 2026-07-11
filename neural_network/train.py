@@ -119,7 +119,7 @@ class CurriculumCallback(BaseCallback):
 # Training                                                                     #
 # --------------------------------------------------------------------------- #
 
-def make_env(mode: str, arm_penalty_coeff: float = 0.175, linear_penalty: bool = False):
+def make_env(mode: str, arm_penalty_coeff: float = 2.0, linear_penalty: bool = False):
     """Factory returning a thunk for make_vec_env."""
     def _init():
         # Balance starts within ±45° of upright — the range it will actually
@@ -140,7 +140,7 @@ def train(
     save: bool,
     learning_rate: float = 3e-4,
     ent_coef: float = 0.01,
-    arm_penalty_coeff: float = 0.175,
+    arm_penalty_coeff: float = 2.0,
     linear_penalty: bool = False,
     load_model: str | None = None,
 ) -> PPO:
@@ -286,9 +286,9 @@ def _print_training_summary(mode: str, total_timesteps: int) -> None:
     slope_per_100k = slope * 100_000
 
     # Convergence verdict.
-    # With arm_penalty=0.175 (quadratic, OMEGA1_MAX normalised), a perfectly
-    # balanced but slowly-spinning arm costs up to 0.175/step.
-    # At 2000 steps/episode: max ≈ 2000, well-controlled arm ≈ 1700–1900.
+    # With the gated arm penalty (coeff=2.0, quadratic, gated by cos(θ_err)),
+    # 200°/s steady spin costs ~309 units/episode, well above training noise (~150 std).
+    # At 2000 steps/episode: max = 2000, well-controlled still arm ≈ 1800–1980.
     still_rising  = slope_per_100k >  5.0   # reward improving meaningfully
     collapsed     = (best_reward - final_reward) > 100
     low_plateau   = best_reward < 1200
@@ -398,14 +398,14 @@ def parse_args():
     p.add_argument(
         "--arm-penalty",
         type=float,
-        default=0.175,
-        help="Arm angular velocity penalty coefficient (default: 0.175)",
+        default=2.0,
+        help="Arm velocity penalty coefficient — gated by cos(θ_err) so the "
+             "arm can move freely when the pendulum is falling (default: 2.0)",
     )
     p.add_argument(
         "--linear-penalty",
         action="store_true",
-        help="Use linear |w1| arm penalty instead of quadratic w1^2 "
-             "(recommended for phase 2 fine-tuning from a trained model)",
+        help="Use linear |w1| arm penalty instead of quadratic w1^2",
     )
     p.add_argument(
         "--load-model",
