@@ -111,18 +111,38 @@ class FurutaParams:
 def _derivatives(state: np.ndarray, torque: float, p: FurutaParams) -> np.ndarray:
     """Compute the state derivative ẋ = f(x, τ).
 
-    Derived from the Lagrangian equations of motion:
+    Derived from the Lagrangian (arm rotating in the horizontal plane,
+    pendulum swinging in the plane that co-rotates with the arm — the
+    standard Furuta-pendulum kinematics):
 
-    Arm:
-        M₁₁(θ₂)·α₁ = τ − b₁·ω₁ − 2·m₂·(L₁ + Lp·sinθ₂)·Lp·cosθ₂·ω₁·ω₂
+        L = ½·M₁₁(θ₂)·ω₁²  +  M₁₂(θ₂)·ω₁·ω₂  +  ½·Jp·ω₂²  +  m₂·g·Lp·cosθ₂
 
-    Pendulum (free):
-        Jp·α₂ = −b₂·ω₂ + m₂·(L₁ + Lp·sinθ₂)·Lp·cosθ₂·ω₁²  −  m₂·g·Lp·sinθ₂
-                          └── centrifugal (swing-up) ──────────┘    └── gravity ──┘
+        M₁₁(θ₂) = Jr + m₂·(L₁² + Lp²·sin²θ₂)
+        M₁₂(θ₂) = m₂·L₁·Lp·cosθ₂
 
-    where M₁₁(θ₂) = Jr + m₂·(L₁ + Lp·sinθ₂)² is the effective arm inertia
-    (it varies with θ₂ because the pendulum's contribution to arm inertia
-    changes as it swings).
+    M₁₂ is the cross-inertia term coupling the arm and pendulum
+    accelerations directly — this is what gives a real Furuta pendulum
+    control authority over the pendulum even with the arm at rest (an
+    applied torque instantaneously affects α₂ through M₁₂, not just through
+    the ω₁² centrifugal term below). An earlier version of this function
+    solved α₁ and α₂ independently, omitting M₁₂ entirely — that is
+    equivalent to claiming the two bodies aren't inertially coupled at all,
+    which (a) makes α₂ exactly zero for any torque while ω₁=0, so the
+    system is uncontrollable right at the operating point balance mode
+    needs, and (b) doesn't conserve energy: integrating that version with
+    zero friction and zero torque loses ~8.7% of total mechanical energy
+    over 3 simulated seconds, which is impossible for a real conservative
+    system and is a clean, checkable sign the equations were wrong rather
+    than merely simplified. Solving the coupled 2×2 system below conserves
+    energy to numerical precision (~1e-10 drift) under the same test.
+
+    The Euler-Lagrange equations give:
+
+        M₁₁·α₁ + M₁₂·α₂ = τ − b₁·ω₁ − m₂·Lp²·sin(2θ₂)·ω₁·ω₂ + m₂·L₁·Lp·sinθ₂·ω₂²
+        M₁₂·α₁ + Jp·α₂  = −b₂·ω₂ + m₂·Lp²·sinθ₂·cosθ₂·ω₁² − m₂·g·Lp·sinθ₂
+
+    solved directly via Cramer's rule (2×2, so a closed form is cheap and
+    avoids a per-step numpy matrix inversion).
 
     Parameters
     ----------
@@ -135,22 +155,24 @@ def _derivatives(state: np.ndarray, torque: float, p: FurutaParams) -> np.ndarra
     s2 = np.sin(th2)
     c2 = np.cos(th2)
 
-    # Effective arm inertia (position-dependent)
-    M11 = p.Jr + p.m2 * (p.L1 + p.Lp * s2) ** 2
+    M11 = p.Jr + p.m2 * (p.L1 ** 2 + p.Lp ** 2 * s2 ** 2)
+    M12 = p.m2 * p.L1 * p.Lp * c2
 
-    # Arm angular acceleration
-    alpha1 = (
+    rhs1 = (
         torque
         - p.b1 * w1
-        - 2.0 * p.m2 * (p.L1 + p.Lp * s2) * p.Lp * c2 * w1 * w2
-    ) / M11
-
-    # Pendulum angular acceleration
-    alpha2 = (
+        - p.m2 * p.Lp ** 2 * np.sin(2.0 * th2) * w1 * w2
+        + p.m2 * p.L1 * p.Lp * s2 * w2 ** 2
+    )
+    rhs2 = (
         -p.b2 * w2
-        + p.m2 * (p.L1 + p.Lp * s2) * p.Lp * c2 * w1 ** 2
+        + p.m2 * p.Lp ** 2 * s2 * c2 * w1 ** 2
         - p.m2 * G * p.Lp * s2
-    ) / p.Jp
+    )
+
+    det = M11 * p.Jp - M12 ** 2
+    alpha1 = (p.Jp * rhs1 - M12 * rhs2) / det
+    alpha2 = (M11 * rhs2 - M12 * rhs1) / det
 
     return np.array([w1, w2, alpha1, alpha2])
 

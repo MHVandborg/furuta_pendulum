@@ -113,6 +113,7 @@ def objective(trial: optuna.Trial) -> float:
             activation_fn=__import__("torch").nn.Tanh,
         ),
         verbose=0,  # suppress per-step output — Optuna prints trial summaries
+        device="cpu",
     )
 
     # ------------------------------------------------------------------ #

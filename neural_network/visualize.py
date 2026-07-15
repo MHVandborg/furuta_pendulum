@@ -15,6 +15,15 @@ import sys
 
 sys.path.insert(0, ".")
 
+# Block TensorFlow before importing stable_baselines3. SB3's logger drags in
+# torch.utils.tensorboard, whose _embedding submodule forces TensorBoard's
+# lazy `tf` proxy to resolve at import time — and since real TensorFlow is
+# installed (for the separate TFLite-export step), that means loading the
+# entire TF/Keras stack (~1.75s) just to define a projector feature this
+# script never uses. Marking it "not installed" makes TensorBoard fall back
+# to its lightweight stub instead — same functionality here, much faster startup.
+sys.modules["tensorflow"] = None
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -57,7 +66,7 @@ def pendulum_geometry(th1, th2, p):
 
 def run_episode(seed: int, difficulty: float = 0.23,
                 model_path: str = "models/balance_best/best_model.zip"):
-    model = PPO.load(model_path)
+    model = PPO.load(model_path, device="cpu")
     env = FurutaEnv(mode="balance", difficulty=difficulty, domain_randomisation=False)
     obs, _ = env.reset(seed=seed)
     p = env._params
@@ -247,13 +256,43 @@ def build_animation(seed: int, model_path: str = "models/balance_best/best_model
 # Entry point                                                                  #
 # --------------------------------------------------------------------------- #
 
+def _available_models() -> str:
+    """Return a human-readable list of saved models for the --help text.
+
+    Top-level zips (e.g. balance_p1_best.zip) are listed individually.
+    Subdirectories (e.g. balance_checkpoints/) are summarised by file count
+    to keep the help output readable.
+    """
+    import glob as _glob
+    from collections import defaultdict
+
+    all_zips = sorted(set(_glob.glob("models/**/*.zip", recursive=True)))
+    if not all_zips:
+        return "(no saved models found in models/)"
+
+    top_level = []
+    subdirs: dict[str, int] = defaultdict(int)
+    for path in all_zips:
+        parts = path.replace("\\", "/").split("/")
+        if len(parts) == 2:          # models/foo.zip
+            top_level.append(path)
+        else:                        # models/subdir/foo.zip
+            subdirs[parts[1]] += 1
+
+    parts = top_level[:]
+    for subdir, count in sorted(subdirs.items()):
+        parts.append(f"models/{subdir}/ ({count} checkpoints)")
+    return "available: " + ", ".join(parts)
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Visualise Furuta balance controller")
     p.add_argument("--seed", type=int, default=1,
                    help="Episode seed (default 1 — ~30° start)")
     p.add_argument("--model", type=str, default="models/balance_best/best_model.zip",
                    help="Path to a saved SB3 model zip "
-                        "(default: models/balance_best/best_model.zip)")
+                        "(default: models/balance_best/best_model.zip). "
+                        f"{_available_models()}")
     return p.parse_args()
 
 

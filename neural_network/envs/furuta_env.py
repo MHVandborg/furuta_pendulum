@@ -40,34 +40,84 @@ Action (1 float, [-1, 1])
 Reward
 ------
   balance:  r = cos(θ_err)
-              − arm_coeff · w1_norm² · max(0, cos(θ_err))
+              − arm_coeff · w1_norm² · settle_gate
               − effort_coeff · u²
 
-              The arm penalty is gated by max(0, cos(θ_err)) so it is only active
-              when the pendulum is near upright.  When the pendulum is falling
-              (cos ≈ 0 or negative) there is no arm penalty — the agent must
-              swing freely to recover.  This has two benefits:
+              settle_gate ramps 0→1 as a leaky counter accumulates: +1 each
+              step |ω₂| < W2_SETTLE_RAD_S, −1 otherwise (clamped to
+              [0, SETTLE_GRACE_STEPS]), gate = counter / SETTLE_GRACE_STEPS.
+              This is a *duration* gate, not an instantaneous one —
+              deliberately, because instantaneous state can't tell "genuinely
+              at rest" from "about to fall": both look identical for the
+              first instant, since ω₂ hasn't had time to build up yet under
+              gravity. An instantaneous-ω₂ version of this gate taxed the
+              corrective torque needed right after any small disturbance
+              (including right after a near-zero-error reset, which also
+              starts with near-zero ω₂ by construction) — so PPO learned to
+              let *every* episode fall through a full swing before ever
+              correcting, regardless of starting error.
 
-                1. Prevents the "spinning cheat": a spinning arm is only cheap
-                   when the pendulum is falling, which is exactly when spinning
-                   doesn't help anyway.  Once balanced, stopping the arm is
-                   strictly better than spinning.
+              The counter used to hard-reset to 0 on any violation instead of
+              decaying by 1. That's exploitable: PPO learned to deliberately
+              flick ω₂ just over the threshold every ~40-50 steps, wiping the
+              counter before it ever neared SETTLE_GRACE_STEPS (confirmed via
+              rollout: counter peaked at 49/100 across an entire 2000-step
+              episode) — collecting the "settled" cos(θ_err) reward while
+              essentially never paying the arm penalty, via a permanent
+              idle/correct/reset limit cycle (the "catch and release"
+              pattern). Decaying by 1 instead of resetting to 0 means a
+              genuinely mostly-settled trajectory still nets forward over
+              multiple cycles and eventually crosses the threshold, while a
+              real corrective transient (unsettled for a long stretch) still
+              drains it properly — closing the loophole without re-taxing
+              legitimate corrections.
 
-                2. Prevents the "stutter" failure mode: with a uniform penalty
-                   the agent makes brief torque bursts to avoid the cost, which
-                   disrupts balance.  The gate removes the penalty during
-                   corrections, so the agent can apply full torques to recover.
+              An earlier version of this gate also required |θ_err| to be
+              within a few degrees of upright before counting as settled.
+              That's exploitable too: for any constant arm speed W, the
+              Furuta pendulum has a genuine relative equilibrium at tilt
+              ε ≈ L1·W²/G (centrifugal effect balancing gravity), with ω₂ = 0
+              there. The agent picked a W whose ε sat just outside the angle
+              band, collecting cos(θ_err) ≈ 0.99 forever with the gate
+              permanently off despite the arm spinning continuously
+              (confirmed via rollout — every seed converged to a ~7° offset
+              at a constant ~170°/s spin, matching the formula almost
+              exactly). Gating on ω₂ alone closes this: sustained near-zero
+              ω₂ under gravity is only physically possible at θ_err ≈ 0° or
+              180° (hanging), so this equilibrium now also counts as settled.
 
-              arm_coeff    — set via env._arm_penalty_coeff (default 2.0)
-              effort_coeff — set via env._effort_penalty_coeff (default 0.001)
-                             u is the normalised torque command in [−1, 1].
-                             At full torque the cost is 0.001/step — small enough
-                             not to inhibit corrections, large enough to eliminate
-                             gratuitous high-frequency torque chattering on hardware.
+              arm_coeff         — env._arm_penalty_coeff   (default 2.0)
+              W2_SETTLE_RAD_S   — class constant, default 0.5 rad/s ≈ 29°/s.
+              SETTLE_GRACE_STEPS— class constant, default 100 steps (0.2s @ 500Hz).
+              effort_coeff      — env._effort_penalty_coeff (default 0.001)
+                                   u is the normalised torque command in [−1, 1].
+                                   At full torque the cost is 0.001/step — small enough
+                                   not to inhibit corrections, large enough to eliminate
+                                   gratuitous high-frequency torque chattering on hardware.
 
   swingup:  r = cos(θ₂ − π)
               +1 when upright, −1 when hanging.
               No arm-velocity penalty — the agent must spin freely.
+
+Episode termination (balance only)
+-----------------------------------
+  balance resets always start within ±45° of upright with energy already
+  directed toward vertical (see reset()), so ever approaching hanging isn't
+  a normal recoverable event — it means control has failed outright. The
+  episode terminates immediately (terminated=True, distinct from the
+  max_steps truncation) once |θ_err| exceeds FAILURE_ANGLE_RAD (90°).
+
+  This replaces relying on per-step reward magnitude to discourage large
+  excursions. A continuous penalty, however large, competes against however
+  many steps of near-max reward remain in the episode after recovering —
+  over a 2000-step episode a ~150-step detour through hanging still nets a
+  strongly positive total once the agent recovers, so no penalty scale ever
+  reliably eliminates the incentive to "pay the tuition" for a wide swing.
+  Terminating removes the entire remaining reward instead of a bounded
+  amount, which is what actually makes a large excursion a bad trade.
+
+  swingup has no such termination — starting near hanging and passing
+  through every angle, including hanging, is the entire point there.
 
 Handoff condition (firmware, not training)
 ------------------------------------------
@@ -156,6 +206,20 @@ class FurutaEnv(gym.Env):
     OMEGA1_MAX: float = 4.0 * np.pi   # arm:      ≈ 2 rev/s
     OMEGA2_MAX: float = 10.0 * np.pi  # pendulum: ≈ 5 rev/s
 
+    # Pendulum speed below which it's considered "settled" for the arm-penalty
+    # gate — see module docstring under Reward. Absolute (not OMEGA2_MAX-relative)
+    # because it needs to reflect genuinely-at-rest, not a fraction of the huge
+    # swing-up velocity range.
+    W2_SETTLE_RAD_S: float = 0.5   # ≈ 29 deg/s
+    SETTLE_GRACE_STEPS: int = 100  # consecutive settled steps (0.2s @ 500Hz) before the arm penalty ramps in
+
+    # Balance mode only: |θ_err| beyond this is treated as a catastrophic
+    # failure, ending the episode immediately (see module docstring under
+    # Reward / Handoff). Generous enough to allow legitimate overshoot while
+    # correcting a worst-case ±45° start, but far short of ever approaching
+    # hanging (180°).
+    FAILURE_ANGLE_RAD: float = np.radians(90.0)
+
     def __init__(
         self,
         mode: str = "balance",
@@ -204,6 +268,7 @@ class FurutaEnv(gym.Env):
         self._state: np.ndarray = np.zeros(4)
         self._step_count: int = 0
         self._last_u: float = 0.0  # last normalised torque command, for effort penalty
+        self._settled_steps: int = 0  # consecutive steps spent near-upright & near-still
 
         # Renderer (lazy initialised)
         self._fig = None
@@ -238,17 +303,28 @@ class FurutaEnv(gym.Env):
             theta2_err = self._rng.uniform(-max_angle, max_angle)
             theta2 = np.pi + theta2_err
 
-            # Arm velocity is sampled independently of pendulum difficulty.
-            # The arm can arrive spinning fast even when the pendulum starts near
-            # upright — e.g. a swing-up handoff or a prior failed balance attempt.
+            # Arm velocity scales with curriculum difficulty too, not just the
+            # pendulum angle range above. It used to be sampled at a fixed
+            # ±360°/s regardless of difficulty, which meant "stage 0" (±5°
+            # pendulum) still threw the full arm-spin disturbance at the agent
+            # — not actually easy on both axes, just on one. That's a
+            # plausible reason training plateaued at stage 1: the difficulty
+            # jump from stage 0→1 tripled the pendulum angle range while the
+            # already-large arm disturbance stayed exactly as hard as it'd
+            # ever be, so the curriculum's reward thresholds (calibrated
+            # assuming a gentle step) didn't match the actual jump in
+            # difficulty.
             #
-            # Cap at OMEGA1_MAX/2 (360 deg/s ≈ 1 rev/s). The cap is not arbitrary:
-            # with arm_penalty coeff=2.0, any arm speed above OMEGA1_MAX/sqrt(2) ≈ 509
-            # deg/s gives NEGATIVE reward even at perfect pendulum balance, so the agent
-            # can never discover what "good" looks like from those starts. Capping at
-            # OMEGA1_MAX/2 = 360 deg/s gives a reward floor of +0.5 at max initial
-            # spin, while still covering realistic handoff arm speeds.
-            max_w1 = self.OMEGA1_MAX / 2.0   # 360 deg/s — reward floor +0.5 at max spin
+            # Range: OMEGA1_MAX·(0.05 + difficulty·0.45), so difficulty=1.0
+            # still reaches the original fixed cap of OMEGA1_MAX/2 (360°/s —
+            # the reward-floor-preserving cap described below), while
+            # difficulty=0.0 starts gentle (~36°/s) instead of full-strength.
+            #
+            # The original cap is not arbitrary: with arm_penalty coeff=2.0,
+            # any arm speed above OMEGA1_MAX/sqrt(2) ≈ 509 deg/s gives NEGATIVE
+            # reward even at perfect pendulum balance, so the agent can never
+            # discover what "good" looks like from those starts.
+            max_w1 = self.OMEGA1_MAX * (0.05 + self.difficulty * 0.45)
             w1 = self._rng.uniform(-max_w1, max_w1)
 
             # Pendulum velocity: directed toward upright with enough energy to
@@ -282,6 +358,7 @@ class FurutaEnv(gym.Env):
             w2 if self.mode == "balance" else 0.0,
         ])
         self._step_count = 0
+        self._settled_steps = 0
 
         return self._obs(), {}
 
@@ -301,7 +378,11 @@ class FurutaEnv(gym.Env):
 
         obs = self._obs()
         reward = self._reward()
-        terminated = False  # no hard failure state — let the episode run
+
+        terminated = False
+        if self.mode == "balance":
+            theta2_err = _angle_normalize(self._state[1] - np.pi)
+            terminated = bool(abs(theta2_err) > self.FAILURE_ANGLE_RAD)
         truncated = self._step_count >= self.max_steps
 
         if self.render_mode == "human":
@@ -345,16 +426,51 @@ class FurutaEnv(gym.Env):
 
     def _reward(self) -> float:
         """Compute per-step reward based on the training mode."""
-        _, th2, w1, _ = self._state
+        _, th2, w1, w2 = self._state
         theta2_err = _angle_normalize(th2 - np.pi)  # 0 = upright
 
         if self.mode == "balance":
-            # Gated arm penalty: only active when the pendulum is near upright.
-            # max(0, cos(θ_err)) is 1 at perfect balance and 0 at 90°/hanging,
-            # so the arm can move freely during recovery and must stop once balanced.
+            # Gated arm penalty: only active once the PENDULUM has been
+            # near-still for a sustained stretch — no angle condition. This
+            # has to be a *duration* condition, not an instantaneous one: a
+            # state that's about to fall looks identical — for an instant —
+            # to a state that's genuinely at rest, because ω₂ hasn't had time
+            # to build up yet. Gating on instantaneous ω₂ alone taxed the
+            # corrective torque needed right after a small disturbance, so
+            # the agent learned to let every episode fall through a full
+            # swing before ever correcting.
+            #
+            # The counter leaks (-1/step) rather than hard-resetting to 0 on
+            # a violation — a hard reset let PPO deliberately flick ω₂ over
+            # the threshold every ~40-50 steps to wipe the counter for free,
+            # settling into a permanent idle/correct/reset limit cycle that
+            # never paid the intended penalty (confirmed via rollout: counter
+            # peaked at 49/100 across a full episode). Leaking still lets a
+            # genuine corrective transient drain it, just not instantly.
+            #
+            # An earlier version also required |θ_err| < 5° to count as
+            # settled. That created an exploit: for any constant arm speed W,
+            # the Furuta pendulum has a genuine relative equilibrium at a
+            # fixed tilt ε ≈ L1·W²/G (centrifugal effect balancing gravity).
+            # The agent picked W ≈ 170°/s → ε ≈ 7°, just outside the 5° band,
+            # producing a state with ω₂ = 0 (so cos(θ_err) ≈ 0.99, almost full
+            # reward) that permanently sat outside the gate, so the arm penalty
+            # never activated despite the arm spinning forever — confirmed via
+            # rollout: every seed converged to ~7° offset with a constant ~170°/s
+            # spin, matching the equilibrium formula almost exactly. Dropping
+            # the angle condition closes this: sustained near-zero ω₂ under
+            # gravity alone is only possible at θ_err≈0° or θ_err≈180°
+            # (hanging), so this equilibrium now also counts as "settled" and
+            # gets taxed like any other residual spin.
             coeff = getattr(self, "_arm_penalty_coeff", 2.0)
-            upright = float(np.cos(theta2_err))            # +1 upright, -1 hanging
-            gate    = max(0.0, upright)                     # 0 when falling/horizontal
+            upright = float(np.cos(theta2_err))         # +1 upright, -1 hanging
+
+            is_settled = abs(w2) < self.W2_SETTLE_RAD_S
+            if is_settled:
+                self._settled_steps = min(self.SETTLE_GRACE_STEPS, self._settled_steps + 1)
+            else:
+                self._settled_steps = max(0, self._settled_steps - 1)
+            gate = min(1.0, self._settled_steps / self.SETTLE_GRACE_STEPS)
             w1_norm = float(np.clip(w1 / self.OMEGA1_MAX, -1.0, 1.0))
             if getattr(self, "_arm_penalty_linear", False):
                 arm_penalty = coeff * abs(w1_norm) * gate

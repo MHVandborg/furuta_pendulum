@@ -45,30 +45,97 @@ from envs import FurutaEnv
 # Reward-based: advance when the rolling mean of recent episode rewards
 # exceeds a threshold.  Uses model.ep_info_buffer — a deque populated
 # directly by SB3's Monitor wrapper — rather than the logger, which has
-# timing issues.  Requires at least MIN_EPISODES recent episodes before
-# evaluating so the mean is stable.
+# timing issues.  Requires at least MIN_EPISODES recent episodes AND
+# MIN_STEPS_PER_STAGE elapsed steps before evaluating, so a stage can't
+# be cleared before the policy has actually been trained at it.
 #
-# Reward per step ≈ -(theta_err_rad)².  At the episode lengths below:
-#   200 steps, avg 8° off  → ep_reward ≈ -12   → threshold -20
-#   500 steps, avg 8° off  → ep_reward ≈ -30   → threshold -50
-#  1000 steps, avg 8° off  → ep_reward ≈ -60   → threshold -100
+# Thresholds are expressed as a fraction of the CURRENT stage's max possible
+# reward (steps_for_truncation × ~1.0/step at a well-settled balance), not a
+# bare absolute number — that keeps them meaningful across future reward
+# changes instead of silently going stale (as the old hardcoded 150/350/700
+# did after several reward-function rewrites). A stage that also has to
+# survive the FAILURE_ANGLE_RAD termination in furuta_env.py can't reach its
+# threshold via a lucky slow fall, since a terminated episode ends with
+# whatever (small/negative) reward it had accumulated so far.
 #
-# Difficulty: 0.0=±5°, 0.15=±30°, 0.50=±90°, 1.0=full random
+# Difficulty: 0.0=±5°, 0.15=±30°, ... capped below (see MAX_SAFE_DIFFICULTY)
+#
+# Curriculum difficulty is capped so that even the hardest stage's starting
+# angle stays safely below FAILURE_ANGLE_RAD (furuta_env.py). A reset that
+# starts ALREADY past that threshold ends the episode on step 1 by
+# definition, before any control is even possible. This used to top out at
+# difficulty=1.0 (full random, ±180°) — confirmed empirically that 51% of
+# resets there start already past the 90° failure line. That's exactly what
+# produced a wildly bimodal eval curve once training reached that stage: a
+# mix of instant failures and full-length episodes averaged together (huge
+# std, episode-length means landing on odd fractions of 200```). MARGIN_DEG
+# below keeps a buffer so the hardest stage isn't itself borderline.
+_MARGIN_DEG = 10.0
+MAX_SAFE_DIFFICULTY = (np.degrees(FurutaEnv.FAILURE_ANGLE_RAD) - _MARGIN_DEG - 5.0) / 175.0  # ~0.43 (~80°)
+assert 0.0 < MAX_SAFE_DIFFICULTY < 1.0
+
+# Stage durations are chosen to sit past the "free ride" window: reset()
+# gives the pendulum velocity aimed at reducing its own starting error
+# (mimicking a realistic swing-up handoff), so a short enough episode can be
+# "solved" by applying zero torque and just coasting on that momentum before
+# gravity's destabilizing pull has time to build up. At the old stage-0
+# duration (200 steps), literal zero-torque scored 99.8% — comfortably over
+# the threshold, meaning that stage taught nothing. Checked empirically per
+# stage at these durations: zero-action scores 64% / 26% / 12% respectively,
+# all safely under their thresholds, so clearing a stage now requires actual
+# correction, not just coasting on the reset's built-in assist.
 BALANCE_CURRICULUM = [
-    # (ep_rew_mean threshold, new_difficulty, new_max_steps)
-    # Reward is cos(theta_err) - 0.1*(w1_norm)² per step, range ≈ [-1.1, +1.0].
-    # Stage 0: ±5°,  200 steps → max episode = +200.  Advance when avg ≥ 150.
-    # Stage 1: ±30°, 500 steps → max episode = +500.  Advance when avg ≥ 350.
-    # Stage 2: ±90°, 1000 steps → max episode = +1000. Advance when avg ≥ 700.
-    # Stage 3: full random, 2000 steps → final difficulty.
-    (150,  0.15,  500),   # holding ±5°/0.4s well   → widen to ±30°/1s
-    (350,  0.50, 1000),   # holding ±30°/1s well    → widen to ±90°/2s
-    (700,  1.00, 2000),   # holding ±90°/2s well    → full random/4s
+    # (steps_for_truncation, threshold_fraction, new_difficulty, max_episode_steps)
+    # steps_for_truncation — episode length while AT this stage (used to
+    #                        compute the reward threshold below it).
+    # max_episode_steps    — episode length switched to once this stage is
+    #                        cleared; becomes the next row's steps_for_truncation.
+    #
+    # Stage 0: ±5°,  600 steps.  Advance at 75% of max (450)  → widen to ~±49°/1000 steps.
+    # Stage 1: ~±49°, 1000 steps. Advance at 70% of max (700)  → widen to ~±80°/1500 steps.
+    # Stage 2: ~±80°, 1500 steps. Advance at 70% of max (1050) → stays at ~±80°, full 2000 steps.
+    (600,  0.75, 0.25,               1000),
+    (1000, 0.70, MAX_SAFE_DIFFICULTY, 1500),
+    (1500, 0.70, MAX_SAFE_DIFFICULTY, 2000),
 ]
 
 # Number of recent episodes required before checking the threshold.
 # Prevents advancing on a lucky streak of just a few episodes.
 MIN_EPISODES = 50
+
+# Minimum environment steps that must elapse within a stage before it's even
+# considered for advancement, regardless of episode count or reward. This is
+# NOT redundant with MIN_EPISODES: PPO's n_steps=2048 x n_envs=8 means the
+# first gradient update doesn't happen until 16,384 steps have been
+# collected, but a stage-0 episode is only 200 steps — MIN_EPISODES=50 could
+# (and did) get satisfied within the very first rollout, before the policy
+# had been trained at all, so the "easy" stage advanced on a near-random
+# policy that was never actually trained at that difficulty. This floor
+# guarantees several PPO updates happen per stage no matter how trivially
+# the reward threshold gets cleared.
+MIN_STEPS_PER_STAGE = 150_000
+
+
+def _stage_info(stage: int) -> str:
+    """One-line summary of a curriculum stage: duration, max score, and the
+    bar to clear next. Used both when a stage starts and when it's cleared."""
+    total_stages = len(BALANCE_CURRICULUM)
+    if stage < total_stages:
+        steps_for_truncation, threshold_fraction, _, _ = BALANCE_CURRICULUM[stage]
+        difficulty = 0.0 if stage == 0 else BALANCE_CURRICULUM[stage - 1][2]
+        max_angle_deg = 5.0 + difficulty * 175.0
+        threshold = threshold_fraction * steps_for_truncation
+        return (
+            f"stage {stage}/{total_stages}  ~+/-{max_angle_deg:.0f}deg  "
+            f"max_steps={steps_for_truncation} (max score {steps_for_truncation})  "
+            f"advance at >={threshold:.0f} ({threshold_fraction*100:.0f}%)"
+        )
+    else:
+        _, _, difficulty, max_episode_steps = BALANCE_CURRICULUM[-1]
+        return (
+            f"stage {stage}/{total_stages} (final)  full random  "
+            f"max_steps={max_episode_steps} (max score {max_episode_steps})"
+        )
 
 
 class CurriculumCallback(BaseCallback):
@@ -84,33 +151,43 @@ class CurriculumCallback(BaseCallback):
         self._train_envs = train_envs
         self._eval_envs  = eval_envs
         self._stage = 0
+        self._stage_start_step = 0
+
+    def _on_training_start(self) -> None:
+        if self.verbose:
+            print(f"[Curriculum] {_stage_info(self._stage)}")
 
     def _on_step(self) -> bool:
         if self._stage >= len(BALANCE_CURRICULUM):
+            return True
+
+        if self.num_timesteps - self._stage_start_step < MIN_STEPS_PER_STAGE:
             return True
 
         buf = self.model.ep_info_buffer
         if len(buf) < MIN_EPISODES:
             return True
 
-        threshold, new_difficulty, new_max_steps = BALANCE_CURRICULUM[self._stage]
+        steps_for_truncation, threshold_fraction, new_difficulty, max_episode_steps = BALANCE_CURRICULUM[self._stage]
+        threshold = threshold_fraction * steps_for_truncation
+        n_eps = len(buf)
         mean_reward = np.mean([ep['r'] for ep in buf])
 
         if mean_reward < threshold:
             return True
 
         self._stage += 1
-        self.model.ep_info_buffer.clear()  # discard old easy-stage episodes
+        self._stage_start_step = self.num_timesteps
+        self.model.ep_info_buffer.clear()  # discard old easy-stage episodes — buf is the same deque, so grab n_eps above first
         self._train_envs.env_method('set_difficulty', new_difficulty)
-        self._train_envs.env_method('set_max_steps',  new_max_steps)
+        self._train_envs.env_method('set_max_steps',  max_episode_steps)
         self._eval_envs.env_method('set_difficulty',  new_difficulty)
-        self._eval_envs.env_method('set_max_steps',   new_max_steps)
+        self._eval_envs.env_method('set_max_steps',   max_episode_steps)
         if self.verbose:
             print(
                 f"\n[Curriculum] step={self.num_timesteps:,}  "
-                f"ep_rew_mean={mean_reward:.1f} (over {len(buf)} eps) → "
-                f"difficulty={new_difficulty:.2f}, max_steps={new_max_steps} "
-                f"(stage {self._stage}/{len(BALANCE_CURRICULUM)})"
+                f"ep_rew_mean={mean_reward:.1f} (over {n_eps} eps) -> "
+                f"{_stage_info(self._stage)}"
             )
         return True
 
@@ -122,11 +199,14 @@ class CurriculumCallback(BaseCallback):
 def make_env(mode: str, arm_penalty_coeff: float = 2.0, linear_penalty: bool = False):
     """Factory returning a thunk for make_vec_env."""
     def _init():
-        # Balance starts within ±45° of upright — the range it will actually
-        # receive from the swing-up handoff.  Cosine reward gives smooth
-        # gradient signal across the full ±45° without needing a curriculum.
-        difficulty = 0.23 if mode == "balance" else 1.0  # 0.23 → max_angle=±45°
-        env = FurutaEnv(mode=mode, domain_randomisation=True, difficulty=difficulty)
+        # Balance starts at curriculum stage 0 (±5°, 600 steps) and is widened
+        # by CurriculumCallback as ep_rew_mean clears each stage's threshold —
+        # see BALANCE_CURRICULUM. Swing-up always starts near hanging and
+        # uses the full episode length from the start.
+        if mode == "balance":
+            env = FurutaEnv(mode=mode, domain_randomisation=True, difficulty=0.0, max_steps=600)
+        else:
+            env = FurutaEnv(mode=mode, domain_randomisation=True, difficulty=1.0)
         env._arm_penalty_coeff = arm_penalty_coeff
         env._arm_penalty_linear = linear_penalty
         return env
@@ -140,6 +220,7 @@ def train(
     save: bool,
     learning_rate: float = 3e-4,
     ent_coef: float = 0.01,
+    gamma: float = 0.99,
     arm_penalty_coeff: float = 2.0,
     linear_penalty: bool = False,
     load_model: str | None = None,
@@ -174,9 +255,11 @@ def train(
             env=train_env,
             tensorboard_log="logs",
             verbose=0,
+            device="cpu",
         )
         model.learning_rate = learning_rate
         model.ent_coef = ent_coef
+        model.gamma = gamma
     else:
         model = PPO(
             policy="MlpPolicy",
@@ -185,7 +268,7 @@ def train(
             n_steps=2048,           # steps per env per update
             batch_size=256,         # larger batch → more stable gradient estimates
             n_epochs=10,
-            gamma=0.99,
+            gamma=gamma,
             gae_lambda=0.95,
             clip_range=0.2,
             ent_coef=ent_coef,
@@ -194,6 +277,7 @@ def train(
             policy_kwargs=policy_kwargs,
             tensorboard_log="logs",
             verbose=0,
+            device="cpu",
         )
 
     # ------------------------------------------------------------------ #
@@ -202,7 +286,7 @@ def train(
     callbacks = []
 
     if mode == "balance":
-        pass  # curriculum disabled — cosine reward gives useful gradient from ±45°
+        callbacks.append(CurriculumCallback(train_env, eval_env))
 
     if save:
         best_model_path = f"models/{mode}_best"
@@ -396,6 +480,16 @@ def parse_args():
         help="PPO entropy coefficient (default: 0.01)",
     )
     p.add_argument(
+        "--gamma",
+        type=float,
+        default=0.99,
+        help="PPO discount factor. Effective planning horizon is roughly "
+             "1/(1-gamma) steps (default 0.99 -> ~100 steps). Raise this "
+             "(e.g. 0.995/0.999) if failures stem from a slow-building drift "
+             "whose consequence arrives too many steps later for the current "
+             "horizon to credit-assign correctly (default: 0.99)",
+    )
+    p.add_argument(
         "--arm-penalty",
         type=float,
         default=2.0,
@@ -425,6 +519,7 @@ if __name__ == "__main__":
     print(f"  n_envs         : {args.n_envs}")
     print(f"  learning_rate  : {args.learning_rate}")
     print(f"  ent_coef       : {args.ent_coef}")
+    print(f"  gamma          : {args.gamma}")
     print(f"  arm_penalty    : {args.arm_penalty} ({'linear' if args.linear_penalty else 'quadratic'})")
     print(f"  load_model     : {args.load_model or '(none - fresh run)'}")
     print(f"  save           : {not args.no_save}\n")
@@ -435,6 +530,7 @@ if __name__ == "__main__":
         save=not args.no_save,
         learning_rate=args.learning_rate,
         ent_coef=args.ent_coef,
+        gamma=args.gamma,
         arm_penalty_coeff=args.arm_penalty,
         linear_penalty=args.linear_penalty,
         load_model=args.load_model,
